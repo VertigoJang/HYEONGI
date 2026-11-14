@@ -10,6 +10,21 @@
   waiting for the model.
 - Gives the model each flagged IP with its top signatures plus the local
   network context, and asks for false positives and likely real attacks.
+- rc17: the evidence per IP no longer depends on the newest-N window. For
+  each flagged IP the review counts everything of the last
+  `triage.summary_minutes` (default 60): all alerts, distinct destination
+  ports, ML flows with the highest probability, first and last time seen.
+  Key detections (port scan, SYN flood, SSH brute force, ML) are always
+  listed; before, only the top three signatures were, and a single port-scan
+  alert could be cut.
+- rc17: alerts the config ignores (decoder and protocol-anomaly gids, noisy
+  rules) no longer use up the newest-N window; the prompt says how many were
+  left out. The window is also limited to the same time span, so an old
+  flood no longer shows up as recent.
+- rc17: right after an attack the review waits until detectors stop
+  reporting (`triage.settle`, default 20 s, at most 90 s). The ML detector
+  judges a connection only after it ended, so a review started at once saw
+  only part of its verdicts.
 - The model now sees the evidence per IP: how many distinct destination
   ports it reached, how many ML flows it triggered and the highest ML
   probability. ML detections are counted as one signature instead of one per

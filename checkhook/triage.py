@@ -12,52 +12,121 @@ suggestion is left to a person.
   python3 -m checkhook.triage --lang Korean --out report.md --skip 192.168.0.1
   python3 -m checkhook.triage --print-prompt
 """
-import argparse, collections, json, re, urllib.request
-from checkhook.alerts import Ignore, tail_alerts
+import argparse, collections, datetime, json, os, re, time, urllib.request
+from checkhook.alerts import Ignore, alert_time, iter_back, tail_alerts
 from checkhook.policy import should_skip
 from checkhook.netinfo import local_context
 
 
 
 # ----------------------------------------------------------------- inputs ----
-def recent_alerts(paths, last, ignore=None):
-    """Newest `last` alerts, aggregated by signature, by source, and per source.
+def recent_alerts(paths, last, ignore=None, skipped=None, since=None):
+    """Newest `last` alerts per file, aggregated by signature, by source, and per source.
 
-    Only alerts whose gid is not ignored count towards `src` (the sources the
-    bridge would block); `per_src` keeps every alert for context."""
+    Alerts the config ignores (decoder/protocol-anomaly gids, noisy rules) are
+    left out of the window instead of using up its slots; their number goes to
+    skipped["n"]. Before rc17 they were counted in, and a flood of them could
+    push real evidence out of the newest-N window."""
     ignore = ignore or Ignore()
     if isinstance(paths, str):
         paths = [paths]
     alerts = []
     for path in paths:                       # IDS alerts, then ML detections (gid 9000)
-        alerts += tail_alerts(path, last)
+        alerts += tail_alerts(path, last, want=lambda al: not ignore(al), skipped=skipped, since=since)
     sig = collections.Counter(); src = collections.Counter()
     per_src = collections.defaultdict(collections.Counter)
-    evidence.clear()
     for al in alerts:
-        msg = al["msg"]
-        if al.get("gid") == 9000:      # one ML line per flow: "p=.. -> dst:port" would make
-            msg = ML_MSG               # every line its own signature and hide the pattern
-        key = (al.get("gid", 1), al["sid"], msg)
+        key = _key(al)
         sig[key] += 1
         if al["src"]:
             per_src[al["src"]][key] += 1
-            ev = evidence.setdefault(al["src"], {"ports": set(), "ml": 0, "pmax": 0.0})
-            if al.get("dport") is not None:
-                ev["ports"].add(al["dport"])
-            if al.get("gid") == 9000:
-                ev["ml"] += 1
-                try:
-                    ev["pmax"] = max(ev["pmax"], float(al.get("score") or 0))
-                except (TypeError, ValueError):
-                    pass
-            if not ignore(al):
-                src[al["src"]] += 1
+            src[al["src"]] += 1
     return len(alerts), sig, src, per_src
 
 
+def _key(al):
+    msg = al["msg"]
+    if al.get("gid") == 9000:      # one ML line per flow: "p=.. -> dst:port" would make
+        msg = ML_MSG               # every line its own signature and hide the pattern
+    return (al.get("gid", 1), al["sid"], msg)
+
+
+# Detections that decide a verdict on their own; always shown, never cut by top-N.
+def is_key(gid, sid):
+    sid = _int(sid)
+    return gid == 122 or (gid == 1 and sid in (1100010, 1100011)) or gid == 9000
+
+
+def _int(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return -1
+
+
+def ip_summary(paths, ips, minutes=60, ignore=None, now=None, max_bytes=64 * 1024 * 1024):
+    """Everything each flagged IP did in the last `minutes`, independent of the
+    newest-N window: alert count, distinct destination ports, ML flows and
+    their highest p, every signature, first and last time seen.
+
+    Files are read backwards until the first alert older than the cutoff."""
+    ignore = ignore or Ignore()
+    now = now or datetime.datetime.now()
+    cutoff = now - datetime.timedelta(minutes=minutes)
+    ips = set(ips)
+    out = {ip: {"alerts": 0, "counted": 0, "ports": set(), "ml": 0, "pmax": 0.0,
+                "sigs": collections.Counter(), "first": None, "last": None} for ip in ips}
+    if isinstance(paths, str):
+        paths = [paths]
+    for path in paths:
+        for al in iter_back(path, max_bytes=max_bytes):
+            t = alert_time(al.get("ts"), now)
+            if t is not None and t < cutoff:
+                break
+            s = out.get(al["src"])
+            if s is None:
+                continue
+            s["alerts"] += 1
+            if not ignore(al):
+                s["counted"] += 1
+            if al.get("dport"):                       # None or 0 (e.g. port_scan) is not a port
+                s["ports"].add(al["dport"])
+            if al.get("gid") == 9000:
+                s["ml"] += 1
+                try:
+                    s["pmax"] = max(s["pmax"], float(al.get("score") or 0))
+                except (TypeError, ValueError):
+                    pass
+            s["sigs"][_key(al)] += 1
+            if t is not None:
+                s["first"] = t if s["first"] is None or t < s["first"] else s["first"]
+                s["last"] = t if s["last"] is None or t > s["last"] else s["last"]
+    return out
+
+
+def _summary_line(ip, s, minutes, k=6):
+    """One line of evidence for the prompt. Key detections (port scan, SYN
+    flood, SSH brute force, ML) come first, then the most frequent others."""
+    keys = [(sg, c) for sg, c in s["sigs"].most_common() if is_key(sg[0], sg[1])]
+    rest = [(sg, c) for sg, c in s["sigs"].most_common() if not is_key(sg[0], sg[1])]
+    shown = keys + rest[:max(0, k - len(keys))]
+    parts = [f"gid={g} sid={sid} \"{m}\" x{c}" for (g, sid, m), c in shown]
+    hidden = len(s["sigs"]) - len(shown)
+    span = ""
+    if s["first"] and s["last"]:
+        span = f" between {s['first']:%H:%M:%S} and {s['last']:%H:%M:%S}"
+    line = (f"- {ip}: in the last {minutes} min{span}: {s['alerts']} alerts "
+            f"({s['counted']} can lead to a block); "
+            f"distinct destination ports: {len(s['ports'])}")
+    if s["ml"]:
+        line += f"; ML flows: {s['ml']} (highest p {s['pmax']:.2f})"
+    line += "; " + "; ".join(parts)
+    if hidden > 0:
+        line += f"; {hidden} more signature(s) with fewer alerts"
+    return line
+
+
 ML_MSG = "CHECKHOOK-ML attack-like flow"
-evidence = {}     # per source: distinct destination ports, ML flow count, highest ML p
 
 
 def blocked_ips(backend="nft"):
@@ -110,7 +179,8 @@ def _sigs(counter, k=3):
     return "; ".join(f"gid={g} sid={s} \"{m}\" x{c}" for (g, s, m), c in counter.most_common(k))
 
 
-def build_prompt(n, sig, src, per_src, flagged, blocked, enforce, ctx, lang):
+def build_prompt(n, sig, src, per_src, flagged, blocked, enforce, ctx, lang,
+                 summary=None, minutes=60, skipped=0):
     L = []
     L.append("You review alerts for a host firewall. Detectors flagged the source IPs below; "
              "you judge, for each of them, whether it is a false positive or a real attack. "
@@ -129,17 +199,19 @@ def build_prompt(n, sig, src, per_src, flagged, blocked, enforce, ctx, lang):
              "flood; many ML flows at p close to 1.00 support an attack. A private or lab address "
              "can be an attacker, so being private is not by itself a sign of a false positive. "
              "A handful of protocol-anomaly alerts with no such pattern points the other way.\n")
-    L.append(f"Alerts in the window: {n}. Most frequent:")
+    L.append(f"Alerts of the last {minutes} min that can lead to a block (newest {n})"
+             + (f" ({skipped} ignored decoder/anomaly alerts left out)" if skipped else "")
+             + ". Most frequent:")
     for (g, s, m), c in sig.most_common(8):
         L.append(f"- gid={g} sid={s} \"{m}\": {c}")
     mode = "blocked" if enforce else "would be blocked (dry-run)"
     L.append(f"\nIPs to review ({mode}):")
     for ip in flagged[:LLM_LIMIT]:
-        ev = evidence.get(ip, {})
-        extra = f"; distinct destination ports: {len(ev.get('ports', ()))}"
-        if ev.get("ml"):
-            extra += f"; ML flows: {ev['ml']} (highest p {ev['pmax']:.2f})"
-        L.append(f"- {ip}: {src.get(ip, 0)} alerts; {_sigs(per_src[ip]) or 'no alert in window'}{extra}")
+        s = (summary or {}).get(ip)
+        if s and s["alerts"]:
+            L.append(_summary_line(ip, s, minutes))
+        else:
+            L.append(f"- {ip}: {src.get(ip, 0)} alerts; {_sigs(per_src[ip]) or 'no alert in window'}")
     L.append(f"""
 Answer with JSON only, in this shape:
 {{"situation": "<2-3 sentences in {lang}>",
@@ -298,11 +370,47 @@ def render(t, model, n, flagged, review_ips, src, enforce, hits, skip, review, l
     return "\n".join(L) + "\n"
 
 
+def settle(paths, ignore, quiet=20, max_wait=90, log=print, sleep=time.sleep, now=time.time):
+    """Wait while detectors are still writing alerts that can lead to a block.
+
+    The ML detector judges a connection only after it ended (idle timeout), so
+    right after an attack its verdicts are still arriving; a review started then
+    sees only part of them. Waits until the newest such alert is `quiet`
+    seconds old, at most `max_wait` seconds. Returns the seconds waited."""
+    waited = 0
+    while waited < max_wait:
+        newest = None
+        for p in paths:
+            try:
+                if now() - os.path.getmtime(p) > quiet:
+                    continue                     # file untouched lately: nothing new
+            except OSError:
+                continue
+            for al in tail_alerts(p, 1, want=lambda al: not ignore(al), max_bytes=4 * 1024 * 1024):
+                t = alert_time(al.get("ts"))
+                if t is not None:
+                    age = (datetime.datetime.now() - t).total_seconds()
+                    newest = age if newest is None else min(newest, age)
+        if newest is None or newest >= quiet:
+            return waited
+        if waited == 0:
+            log(f"[*] detectors are still reporting (newest alert {newest:.0f}s old); "
+                f"waiting up to {max_wait}s so the review sees all of it")
+        sleep(5); waited += 5
+    return waited
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--alert-file", action="append", default=None,
                     help="alert file (repeatable: IDS alerts, ML detections)")
-    ap.add_argument("--last", type=int, default=500, help="use the newest N alerts")
+    ap.add_argument("--last", type=int, default=500,
+                    help="newest N alerts per file that can lead to a block")
+    ap.add_argument("--summary-minutes", type=int, default=60,
+                    help="per-IP evidence covers this many minutes, independent of --last")
+    ap.add_argument("--settle", type=int, default=20,
+                    help="wait until the newest alert is this many seconds old (0 = do not wait)")
+    ap.add_argument("--max-wait", type=int, default=90, help="upper bound for --settle")
     ap.add_argument("--model", default="qwen2.5:7b")
     ap.add_argument("--host", default="http://localhost:11434")
     ap.add_argument("--lang", default="English")
@@ -324,14 +432,20 @@ def main(argv=None):
     ignore = Ignore([g for g in a.ignore_gids.split(",") if g.strip()],
                     [r for r in a.ignore_rules.split(",") if r.strip()])
     files = a.alert_file or ["/var/log/checkhook/snort/alert_json.txt"]
-    n, sig, src, per_src = recent_alerts(files, a.last, ignore)
+    if a.settle > 0 and not a.print_prompt:
+        settle(files, ignore, a.settle, a.max_wait)
+    skipped = {}
+    since = datetime.datetime.now() - datetime.timedelta(minutes=a.summary_minutes)
+    n, sig, src, per_src = recent_alerts(files, a.last, ignore, skipped, since)
     blocked = blocked_ips(a.backend)
     flagged = flagged_ips(src, blocked, skip, a.block_private)
     ctx = local_context()
     hits = infra_hits(flagged, ctx)
     infra = {ip for ip, _ in hits}
     review_ips = [ip for ip in flagged if ip not in infra]   # infra is decided without the LLM
-    prompt = build_prompt(n, sig, src, per_src, review_ips, blocked, a.enforce, ctx, a.lang)
+    summary = ip_summary(files, review_ips[:LLM_LIMIT], a.summary_minutes, ignore)
+    prompt = build_prompt(n, sig, src, per_src, review_ips, blocked, a.enforce, ctx, a.lang,
+                          summary, a.summary_minutes, skipped.get("n", 0))
     if a.print_prompt:
         print(prompt); return 0
     print(f"[*] triage: {n} alerts, {len(flagged)} flagged IPs, "
@@ -345,7 +459,10 @@ def main(argv=None):
             llm_err = f"{a.host}: {e} (check: curl {a.host}/api/tags)"
             print(f"[!] Ollama request failed: {llm_err}")
     t = TEXT.get(a.lang, TEXT["English"])
-    out = render(t, a.model, n, flagged, review_ips, src, a.enforce, hits, skip, review, llm_raw, llm_err)
+    counts = collections.Counter(src)
+    for ip, sm in summary.items():           # the report shows the full count, not the window's
+        counts[ip] = max(counts[ip], sm["counted"])
+    out = render(t, a.model, n, flagged, review_ips, counts, a.enforce, hits, skip, review, llm_raw, llm_err)
     if a.out:
         with open(a.out, "w", encoding="utf-8") as f:
             f.write(out)

@@ -6,8 +6,10 @@ Understands, line by line (auto-detected):
                            "alert": {"signature_id": 2001219, "signature": "..."}, ...}
 Other eve.json events (flow, dns, http, stats ...) are ignored.
 """
+import datetime as _dt
 import json
 import os
+import re
 
 
 def parse_alert(line):
@@ -34,7 +36,8 @@ def parse_alert(line):
         al = ev.get("alert") or {}
         return {"src": ev.get("src_ip"), "gid": _int(al.get("gid"), 1),
                 "sid": al.get("signature_id"), "msg": al.get("signature", ""),
-                "ids": "suricata"}
+                "ids": "suricata", "dport": _int(ev.get("dest_port"), None),
+                "score": None, "ts": ev.get("timestamp")}
     if "src_addr" in ev or "sid" in ev:          # Snort 3 alert_json
         gid = _int(ev.get("gid"), 1)
         dport = ev.get("dst_port")
@@ -42,7 +45,8 @@ def parse_alert(line):
             dport = ev["dst_ap"].rsplit(":", 1)[1]          # Snort's "addr:port" field
         return {"src": ev.get("src_addr"), "gid": gid, "sid": ev.get("sid"),
                 "msg": ev.get("msg", ""), "ids": "ml" if gid == 9000 else "snort",
-                "dport": _int(dport, None), "score": ev.get("score")}
+                "dport": _int(dport, None), "score": ev.get("score"),
+                "ts": ev.get("timestamp")}
     return None
 
 
@@ -77,22 +81,19 @@ def _int(v, default):
         return default
 
 
-def tail_alerts(path, last, max_bytes=64 * 1024 * 1024, block=1024 * 1024):
-    """The newest `last` alerts in `path`, oldest first.
+def iter_back(path, max_bytes=64 * 1024 * 1024, block=1024 * 1024):
+    """Parsed alerts of `path`, newest first, reading backwards in blocks.
 
-    Reads backwards from the end in blocks and stops once enough alerts are
-    found or `max_bytes` were scanned, so a multi-GB eve.json full of flow and
-    dns events is never read whole.
-    """
+    Stops after `max_bytes`, so a multi-GB eve.json full of flow and dns
+    events is never read whole."""
     try:
         f = open(path, "rb")
     except FileNotFoundError:
-        return []
-    found = []
+        return
     with f:
         end = f.seek(0, os.SEEK_END)
         pos, scanned, rest = end, 0, b""
-        while pos > 0 and len(found) < last and scanned < max_bytes:
+        while pos > 0 and scanned < max_bytes:
             step = min(block, pos)
             pos -= step
             f.seek(pos)
@@ -102,13 +103,67 @@ def tail_alerts(path, last, max_bytes=64 * 1024 * 1024, block=1024 * 1024):
             for raw in reversed(lines):
                 al = parse_alert(raw.decode("utf-8", "replace"))
                 if al:
-                    found.append(al)
-                    if len(found) >= last:
-                        break
+                    yield al
             scanned += step
-        if rest and len(found) < last:
+        if rest:
             al = parse_alert(rest.decode("utf-8", "replace"))
             if al:
-                found.append(al)
+                yield al
+
+
+def tail_alerts(path, last, want=None, skipped=None, since=None, **kw):
+    """The newest `last` alerts in `path`, oldest first.
+
+    want: optional predicate; alerts it rejects are not collected (and do not
+    use up the `last` slots), only counted in skipped["n"] if a dict is given.
+    This keeps a flood of ignored decoder alerts from pushing real evidence
+    out of the window.
+    since: optional datetime; reading stops at the first older alert."""
+    found = []
+    for al in iter_back(path, **kw):
+        if since is not None:
+            t = alert_time(al.get("ts"))
+            if t is not None and t < since:
+                break
+        if want is not None and not want(al):
+            if skipped is not None:
+                skipped["n"] = skipped.get("n", 0) + 1
+            continue
+        found.append(al)
+        if len(found) >= last:
+            break
     found.reverse()
     return found
+
+
+_SNORT_TS = re.compile(r"^(\d\d)/(\d\d)-(\d\d):(\d\d):(\d\d)")
+
+
+def alert_time(ts, now=None):
+    """Local naive datetime of an alert timestamp, or None.
+
+    Snort 3 writes "11/14-13:38:40.200636" (no year: the year that keeps the
+    time from lying in the future is used); ML lines and Suricata use ISO 8601."""
+    if not ts:
+        return None
+    now = now or _dt.datetime.now()
+    m = _SNORT_TS.match(str(ts))
+    if m:
+        mo, d, h, mi, se = map(int, m.groups())
+        try:
+            t = _dt.datetime(now.year, mo, d, h, mi, se)
+        except ValueError:
+            return None
+        if t > now + _dt.timedelta(days=1):          # e.g. a Dec 31 alert read on Jan 1
+            t = t.replace(year=now.year - 1)
+        return t
+    try:
+        t = _dt.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        try:                                         # Suricata "+0900" offsets
+            t = _dt.datetime.strptime(str(ts)[:19], "%Y-%m-%dT%H:%M:%S")
+        except ValueError:
+            return None
+    if t.tzinfo is not None:
+        t = t.astimezone().replace(tzinfo=None)
+    return t

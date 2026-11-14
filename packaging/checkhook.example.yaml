@@ -44,6 +44,8 @@ triage:                   # "Check": read-only LLM review of flagged IPs (local 
   enabled: true
   alert_file: /var/log/checkhook/snort/alert_json.txt   # same file as ids.alert_file
   last: 500
+  summary_minutes: 60      # per-IP evidence for the LLM covers this many minutes
+  settle: 20               # wait until detectors stop reporting (seconds, 0 = off)
   model: qwen2.5:7b
   host: http://localhost:11434
   lang: Korean

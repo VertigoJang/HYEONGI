@@ -88,6 +88,8 @@ def main():
             os.makedirs(os.path.dirname(out), exist_ok=True)
         from checkhook.triage import main as m
         argv = ["--alert-file", sect["alert_file"], "--last", str(sect["last"]),
+                "--summary-minutes", str(sect.get("summary_minutes", 60)),
+                "--settle", str(sect.get("settle", 20)),
                 "--model", sect["model"], "--host", sect["host"],
                 "--lang", sect["lang"], "--backend", c["backend"]]
         ml_alerts = c["ml"].get("alert_file")

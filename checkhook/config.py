@@ -51,6 +51,7 @@ DEFAULTS = {
     "xdp": {"iface": "eth0", "mode": "generic"},
     "triage": {"enabled": True, "alert_file": "/var/log/snort/alert_json.txt",
                "last": 500, "model": "qwen2.5:7b",
+               "summary_minutes": 60, "settle": 20,
                "host": "http://localhost:11434", "lang": "English",
                "out": "/var/lib/checkhook/triage/report.txt"},
     # flow logging for ML training data: every finished flow's features go to
