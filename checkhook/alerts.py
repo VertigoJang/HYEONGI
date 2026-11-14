@@ -81,11 +81,12 @@ def _int(v, default):
         return default
 
 
-def iter_back(path, max_bytes=64 * 1024 * 1024, block=1024 * 1024):
+def iter_back(path, max_bytes=64 * 1024 * 1024, block=1024 * 1024, state=None):
     """Parsed alerts of `path`, newest first, reading backwards in blocks.
 
     Stops after `max_bytes`, so a multi-GB eve.json full of flow and dns
-    events is never read whole."""
+    events is never read whole; then state["truncated"] is set to True if a
+    dict is given."""
     try:
         f = open(path, "rb")
     except FileNotFoundError:
@@ -105,6 +106,9 @@ def iter_back(path, max_bytes=64 * 1024 * 1024, block=1024 * 1024):
                 if al:
                     yield al
             scanned += step
+        if pos > 0 and state is not None:
+            state["truncated"] = True
+            return
         if rest:
             al = parse_alert(rest.decode("utf-8", "replace"))
             if al:

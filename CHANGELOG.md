@@ -16,7 +16,9 @@
   ports, ML flows with the highest probability, first and last time seen.
   Key detections (port scan, SYN flood, SSH brute force, ML) are always
   listed; before, only the top three signatures were, and a single port-scan
-  alert could be cut.
+  alert could be cut. Times from another day carry the date, and if an
+  alert file is too large to read back to the start of the span, the prompt
+  says from when the counts are complete instead of passing them off as whole.
 - rc17: alerts the config ignores (decoder and protocol-anomaly gids, noisy
   rules) no longer use up the newest-N window; the prompt says how many were
   left out. The window is also limited to the same time span, so an old

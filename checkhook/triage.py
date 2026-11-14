@@ -75,14 +75,18 @@ def ip_summary(paths, ips, minutes=60, ignore=None, now=None, max_bytes=64 * 102
     cutoff = now - datetime.timedelta(minutes=minutes)
     ips = set(ips)
     out = {ip: {"alerts": 0, "counted": 0, "ports": set(), "ml": 0, "pmax": 0.0,
-                "sigs": collections.Counter(), "first": None, "last": None} for ip in ips}
+                "sigs": collections.Counter(), "first": None, "last": None,
+                "partial_since": None} for ip in ips}
     if isinstance(paths, str):
         paths = [paths]
     for path in paths:
-        for al in iter_back(path, max_bytes=max_bytes):
+        state, oldest = {}, None
+        for al in iter_back(path, max_bytes=max_bytes, state=state):
             t = alert_time(al.get("ts"), now)
             if t is not None and t < cutoff:
                 break
+            if t is not None:
+                oldest = t
             s = out.get(al["src"])
             if s is None:
                 continue
@@ -101,7 +105,18 @@ def ip_summary(paths, ips, minutes=60, ignore=None, now=None, max_bytes=64 * 102
             if t is not None:
                 s["first"] = t if s["first"] is None or t < s["first"] else s["first"]
                 s["last"] = t if s["last"] is None or t > s["last"] else s["last"]
+        if state.get("truncated") and oldest is not None:
+            # the file was too large to read back to the cutoff: say so instead
+            # of presenting a partial count as complete
+            for s in out.values():
+                if s["partial_since"] is None or oldest > s["partial_since"]:
+                    s["partial_since"] = oldest
     return out
+
+
+def _when(t, now=None):
+    now = now or datetime.datetime.now()
+    return f"{t:%H:%M:%S}" if t.date() == now.date() else f"{t:%m-%d %H:%M:%S}"
 
 
 def _summary_line(ip, s, minutes, k=6):
@@ -114,7 +129,7 @@ def _summary_line(ip, s, minutes, k=6):
     hidden = len(s["sigs"]) - len(shown)
     span = ""
     if s["first"] and s["last"]:
-        span = f" between {s['first']:%H:%M:%S} and {s['last']:%H:%M:%S}"
+        span = f" between {_when(s['first'])} and {_when(s['last'])}"
     line = (f"- {ip}: in the last {minutes} min{span}: {s['alerts']} alerts "
             f"({s['counted']} can lead to a block); "
             f"distinct destination ports: {len(s['ports'])}")
@@ -123,6 +138,9 @@ def _summary_line(ip, s, minutes, k=6):
     line += "; " + "; ".join(parts)
     if hidden > 0:
         line += f"; {hidden} more signature(s) with fewer alerts"
+    if s.get("partial_since"):
+        line += (f"; NOTE: alert files too large to read completely, counts cover only "
+                 f"alerts since {_when(s['partial_since'])}")
     return line
 
 
