@@ -240,8 +240,9 @@ class App(QMainWindow):
         t = s.get("today", {})
         self.c_alerts.value.setText(f"{t.get('alerts', 0):,}")
         self.c_alerts.note.setText("탐지기가 낸 경보 수 (차단과 무관한 것 포함)")
-        self.c_blocked.value.setText(f"{t.get('blocked', 0)} / {t.get('would_block', 0)}")
-        self.c_blocked.note.setText("차단 예정 = 기록만 함 상태에서 차단했을 IP")
+        auto, manual = t.get("blocked", 0), t.get("manual", 0)
+        self.c_blocked.value.setText(f"{auto + manual} / {t.get('would_block', 0)}")
+        self.c_blocked.note.setText(f"차단 = 자동 {auto} + 수동 {manual} · 차단 예정 = 기록만 함 상태에서 차단했을 IP")
         bl = s.get("blocklist")
         self.c_list.value.setText(str(len(bl)) if bl is not None else "-")
         note = ", ".join(bl[:3]) if bl else "커널 차단 목록에 들어 있는 IP 수"
@@ -268,7 +269,7 @@ class App(QMainWindow):
             if f["ip"] in inlist:
                 label, col = "차단 중", RED
             for c, val in enumerate([cell(f["ip"]), cell(label, col), cell(f["count"]),
-                                     cell(hhmm(f["last"])), cell(f["reason"])]):
+                                     cell(hhmm(f["last"])), cell(f.get("reason", ""))]):
                 self.t_flag.setItem(r, c, val)
         alerts = s.get("alerts", [])
         self.t_alert.setRowCount(len(alerts))

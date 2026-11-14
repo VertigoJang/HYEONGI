@@ -14,6 +14,60 @@ from checkhook.config import WINDOWS, PROGRAMDATA
 
 DATA = PROGRAMDATA if WINDOWS else "/var/lib/checkhook"
 PATH = os.path.join(DATA, "status.json")
+MANUAL = os.path.join(DATA, "manual-blocks.log")   # written by `checkhook ctl block/unblock`
+
+
+def log_manual(ip, action):
+    """Record a manual block/unblock (the daemon does not see those, so the
+    day's block count used to miss them)."""
+    try:
+        os.makedirs(DATA, exist_ok=True)
+        with open(MANUAL, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"t": time.time(), "day": datetime.date.today().isoformat(),
+                                "ip": ip, "action": action}) + "\n")
+    except OSError:
+        pass
+
+
+def manual_today(day):
+    n = 0
+    try:
+        with open(MANUAL, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if e.get("day") == day and e.get("action") == "block":
+                    n += 1
+    except OSError:
+        pass
+    return n
+
+
+# Detections that say most about an IP, best first; used for the "reason" shown.
+def _rank(key):
+    gid, _, sid = key.partition(":")
+    if key == "1:1100010":
+        return 0          # SYN flood
+    if gid == "122":
+        return 1          # port scan
+    if key == "1:1100011":
+        return 2          # SSH brute force
+    if gid == "9000":
+        return 3          # ML
+    return 4
+
+
+def best_reason(sigs):
+    """Representative reason for a flagged IP: the strongest kind of detection,
+    then the most frequent, with counts (e.g. "SYN flood x3 · ML x1990")."""
+    if not sigs:
+        return ""
+    order = sorted(sigs.items(), key=lambda kv: (_rank(kv[0]), -kv[1]["n"]))
+    top = [f"{v['msg']} x{v['n']}" for _, v in order[:2]]
+    more = len(order) - len(top)
+    return " · ".join(top) + (f" (+{more}종)" if more > 0 else "")
 UNITS = ["checkhookd", "checkhook-ids", "checkhook-xdp", "checkhook-capture"]
 TASKS = ["checkhookd", "checkhook-suricata"]
 
@@ -109,9 +163,18 @@ class Board:
             if action in ("blocked", "would-block"):
                 self.counts["blocked" if action == "blocked" else "would_block"] += 1
                 f = self.flagged.setdefault(al["src"], {"first": now, "count": 0})
-                f.update(last=now, reason=f"sid={al.get('sid')} {al.get('msg', '')}"[:160],
-                         action=action)
+                f.update(last=now, action=action)
                 f["count"] += 1
+            f = self.flagged.get(al.get("src"))
+            if f is not None and action in ("blocked", "would-block", "recent"):
+                # every alert of a flagged IP feeds its reason, not only the first
+                gid = al.get("gid", 1)
+                key = f"{gid}:{al.get('sid')}"
+                msg = "CHECKHOOK-ML attack-like flow" if gid == 9000 else al.get("msg", "")
+                sigs = f.setdefault("sigs", {})
+                if key in sigs or len(sigs) < 30:
+                    sigs.setdefault(key, {"msg": msg[:80], "n": 0})["n"] += 1
+                f["reason"] = best_reason(sigs)[:200]
 
     def flow(self):
         with self.lock:
@@ -134,7 +197,8 @@ class Board:
                 "demo": os.path.exists(os.path.join(DATA, "demo")),
                 "protect_local": bool(c.get("protect_local", True)), "skip": list(c["skip"]),
                 "block_timeout": c["block_timeout"], "services": dict(self.services),
-                "day": self.day, "today": dict(self.counts), "flows": self.flows,
+                "day": self.day, "today": dict(self.counts, manual=manual_today(self.day)),
+                "flows": self.flows,
                 "flow_logging": self.flow_logging,
                 "blocklist": sorted(blocklist) if blocklist is not None else None,
                 "flagged": [dict(ip=ip, **v) for ip, v in
@@ -210,8 +274,9 @@ def summary(s):
         L.append(f"  학습 데이터   : {'일시정지' if s['paused'] else '수집 중'}, 누적 flow "
                  + (f"{s['flows']:,}개" if s.get("flows") is not None else "(세는 중)"))
     t = s.get("today", {})
-    L.append(f"  오늘          : 경보 {t.get('alerts', 0):,}건, 차단 {t.get('blocked', 0)}건, "
-             f"차단 예정 {t.get('would_block', 0)}건")
+    auto, manual = t.get("blocked", 0), t.get("manual", 0)
+    L.append(f"  오늘          : 경보 {t.get('alerts', 0):,}건, 차단 {auto + manual}건 "
+             f"(자동 {auto}, 수동 {manual}), 차단 예정 {t.get('would_block', 0)}건")
     if s.get("blocklist") is not None:
         L.append(f"  차단 목록     : {len(s['blocklist'])}개 IP"
                  + (f" {', '.join(s['blocklist'][:5])}" if s["blocklist"] else ""))
@@ -226,7 +291,10 @@ def summary(s):
         L.append("  최근 차단 대상:")
         for f in s["flagged"][:5]:
             when = datetime.datetime.fromtimestamp(f["last"]).strftime("%H:%M")
-            L.append(f"    {when} {f['ip']:<16} {ACTION_KO.get(f['action'], f['action'])}  {f['reason']}")
+            act = ACTION_KO.get(f["action"], f["action"])
+            if f["ip"] in (s.get("blocklist") or []):
+                act = "차단 중"                      # e.g. blocked by hand after a dry-run flag
+            L.append(f"    {when} {f['ip']:<16} {act}  {f.get('reason', '')}")
     return "\n".join(L)
 
 

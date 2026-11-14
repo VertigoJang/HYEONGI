@@ -120,11 +120,15 @@ def main(argv=None):
         bl = Blocklist(backend=c["backend"], default_timeout=c["block_timeout"])
         bl.setup()
         bl.add(ip)
+        from checkhook.status import log_manual
+        log_manual(ip, "block")
         print(f"[+] blocked {ip} for {c['block_timeout']} (manual)")
     elif cmd == "unblock" and args:
         ip = need_ip(args[0])
         from checkhook.blocklist import Blocklist
         Blocklist(backend=c["backend"]).remove(ip)
+        from checkhook.status import log_manual
+        log_manual(ip, "unblock")
         print(f"[+] unblocked {ip}")
     elif cmd in ("skip-add", "skip-remove") and args:
         ip = need_ip(args[0])

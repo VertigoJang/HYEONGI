@@ -31,6 +31,20 @@
   (Snort renames a full alert_json to `<name>.<time>`), so a span that
   crosses a rotation is counted whole.
 
+**Status**
+- rc19: manual blocks (app button or `checkhook ctl block`) are counted. They
+  are logged to `/var/lib/checkhook/manual-blocks.log`; `checkhook stats` and
+  the app show today's blocks as automatic + manual. Before, a manual block
+  left "blocked today: 0".
+- rc19: the reason shown for a flagged IP is its strongest detection with
+  counts (SYN flood, then port scan, SSH brute force, ML, then the most
+  frequent), built from every alert of that IP, e.g.
+  `CHECKHOOK possible SYN flood x3 · (port_scan) TCP filtered portscan x1 (+2종)`.
+  Before, it was whichever alert happened to trigger the flag (often a telnet
+  probe from the start of a port scan).
+- rc19: `checkhook stats` shows "차단 중" for a flagged IP that is in the
+  kernel blocklist, as the app already did.
+
 **Alert floods**
 - rc18: `install-snort.sh` adds a Snort `event_filter` that reports the SYN
   flood (1100010) and SSH brute-force (1100011) rules at most once a minute
