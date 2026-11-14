@@ -13,7 +13,7 @@ suggestion is left to a person.
   python3 -m checkhook.triage --print-prompt
 """
 import argparse, collections, datetime, json, os, re, time, urllib.request
-from checkhook.alerts import Ignore, alert_time, iter_back, tail_alerts
+from checkhook.alerts import Ignore, alert_time, iter_back, rotated, tail_alerts
 from checkhook.policy import should_skip
 from checkhook.netinfo import local_context
 
@@ -32,7 +32,8 @@ def recent_alerts(paths, last, ignore=None, skipped=None, since=None):
         paths = [paths]
     alerts = []
     for path in paths:                       # IDS alerts, then ML detections (gid 9000)
-        alerts += tail_alerts(path, last, want=lambda al: not ignore(al), skipped=skipped, since=since)
+        alerts += tail_alerts(path, last, want=lambda al: not ignore(al), skipped=skipped,
+                              since=since, follow_rotated=True)
     sig = collections.Counter(); src = collections.Counter()
     per_src = collections.defaultdict(collections.Counter)
     for al in alerts:
@@ -79,35 +80,41 @@ def ip_summary(paths, ips, minutes=60, ignore=None, now=None, max_bytes=64 * 102
                 "partial_since": None} for ip in ips}
     if isinstance(paths, str):
         paths = [paths]
+    budget = max_bytes
     for path in paths:
-        state, oldest = {}, None
-        for al in iter_back(path, max_bytes=max_bytes, state=state):
-            t = alert_time(al.get("ts"), now)
-            if t is not None and t < cutoff:
+        state, oldest, done = {}, None, False
+        for f in [path] + rotated(path):           # current file, then older generations
+            state = {}
+            for al in iter_back(f, max_bytes=budget, state=state):
+                t = alert_time(al.get("ts"), now)
+                if t is not None and t < cutoff:
+                    done = True
+                    break
+                if t is not None:
+                    oldest = t
+                s = out.get(al["src"])
+                if s is None:
+                    continue
+                s["alerts"] += 1
+                if not ignore(al):
+                    s["counted"] += 1
+                if al.get("dport"):                       # None or 0 (e.g. port_scan) is not a port
+                    s["ports"].add(al["dport"])
+                if al.get("gid") == 9000:
+                    s["ml"] += 1
+                    try:
+                        s["pmax"] = max(s["pmax"], float(al.get("score") or 0))
+                    except (TypeError, ValueError):
+                        pass
+                s["sigs"][_key(al)] += 1
+                if t is not None:
+                    s["first"] = t if s["first"] is None or t < s["first"] else s["first"]
+                    s["last"] = t if s["last"] is None or t > s["last"] else s["last"]
+            if done or state.get("truncated"):
                 break
-            if t is not None:
-                oldest = t
-            s = out.get(al["src"])
-            if s is None:
-                continue
-            s["alerts"] += 1
-            if not ignore(al):
-                s["counted"] += 1
-            if al.get("dport"):                       # None or 0 (e.g. port_scan) is not a port
-                s["ports"].add(al["dport"])
-            if al.get("gid") == 9000:
-                s["ml"] += 1
-                try:
-                    s["pmax"] = max(s["pmax"], float(al.get("score") or 0))
-                except (TypeError, ValueError):
-                    pass
-            s["sigs"][_key(al)] += 1
-            if t is not None:
-                s["first"] = t if s["first"] is None or t < s["first"] else s["first"]
-                s["last"] = t if s["last"] is None or t > s["last"] else s["last"]
-        if state.get("truncated") and oldest is not None:
-            # the file was too large to read back to the cutoff: say so instead
-            # of presenting a partial count as complete
+        if state.get("truncated") and not done and oldest is not None:
+            # too large to read back to the cutoff: say so instead of passing
+            # a partial count off as complete
             for s in out.values():
                 if s["partial_since"] is None or oldest > s["partial_since"]:
                     s["partial_since"] = oldest
@@ -213,8 +220,9 @@ def build_prompt(n, sig, src, per_src, flagged, blocked, enforce, ctx, lang,
              "gid 9000 is CheckHook's own machine-learning flow classifier; p is its "
              "attack probability for one connection.")
     L.append("How to weigh the evidence: one source reaching many distinct destination ports "
-             "in a short window is a port scan; thousands of SYN-flood hits from one source are a "
-             "flood; many ML flows at p close to 1.00 support an attack. A private or lab address "
+             "in a short window is a port scan; a SYN-flood alert means one source sent at least "
+             "1500 connection requests (SYN) within 2 seconds, and it may be reported only once a "
+             "minute per source, so even one counts; many ML flows at p close to 1.00 support an attack. A private or lab address "
              "can be an attacker, so being private is not by itself a sign of a false positive. "
              "A handful of protocol-anomaly alerts with no such pattern points the other way.\n")
     L.append(f"Alerts of the last {minutes} min that can lead to a block (newest {n})"

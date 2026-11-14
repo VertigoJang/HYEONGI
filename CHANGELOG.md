@@ -27,6 +27,23 @@
   reporting (`triage.settle`, default 20 s, at most 90 s). The ML detector
   judges a connection only after it ended, so a review started at once saw
   only part of its verdicts.
+- rc18: the review also reads the rotated generations of an alert file
+  (Snort renames a full alert_json to `<name>.<time>`), so a span that
+  crosses a rotation is counted whole.
+
+**Alert floods**
+- rc18: `install-snort.sh` adds a Snort `event_filter` that reports the SYN
+  flood (1100010) and SSH brute-force (1100011) rules at most once a minute
+  per source. `detection_filter` alone fires on every packet past the
+  threshold: one lab flood wrote about 290,000 alerts (190 MB). Detection,
+  blocking and re-blocking after `block_timeout` need only one alert. If
+  `snort -T` rejects the filter, the script falls back without it.
+- rc18: checkhookd deletes rotated alert files beyond `ids.keep_rotated`
+  (default 3, i.e. about 300 MB of Snort alerts) and keeps one rotated ML
+  alert file.
+- rc18 fix: re-running `install-snort.sh` rewrote every `alert_file:` line in
+  the config, including `ml.alert_file`; it now changes only the `ids:` and
+  `triage:` sections.
 - The model now sees the evidence per IP: how many distinct destination
   ports it reached, how many ML flows it triggered and the highest ML
   probability. ML detections are counted as one signature instead of one per

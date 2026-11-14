@@ -41,7 +41,9 @@ DEFAULTS = {
     #                                     ...) still block.
     "ids": {"enabled": True, "alert_file": "/var/log/checkhook/snort/alert_json.txt",
             "ignore_gids": [116, 119, 128, 129, 137], "ignore_rules": ["1:399", "1:402", "1:408", "1:366", "1:384", "1:480", "1:29456",
-                             "122:3", "122:7", "122:19", "122:23"]},
+                             "122:3", "122:7", "122:19", "122:23"],
+            # Snort renames a full alert file (100 MB) to <name>.<time>; keep this many
+            "keep_rotated": 3},
     "ml": {"enabled": True, "iface": "eth0",
            "model": "/var/lib/checkhook/model.joblib",
            "threshold": 0.9, "idle": 15, "active": 120,

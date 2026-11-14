@@ -7,6 +7,7 @@ Understands, line by line (auto-detected):
 Other eve.json events (flow, dns, http, stats ...) are ignored.
 """
 import datetime as _dt
+import glob
 import json
 import os
 import re
@@ -115,26 +116,61 @@ def iter_back(path, max_bytes=64 * 1024 * 1024, block=1024 * 1024, state=None):
                 yield al
 
 
-def tail_alerts(path, last, want=None, skipped=None, since=None, **kw):
+def rotated(path):
+    """Older generations of an alert file, newest first.
+
+    Snort's alert_json renames the full file to "<name>.<unix time>" when it
+    reaches its size limit; the ML writer and Suricata setups use "<name>.1"."""
+    out = []
+    for p in glob.glob(glob.escape(path) + ".*"):
+        if re.fullmatch(r"\d+", p[len(path) + 1:]):
+            try:
+                out.append((os.path.getmtime(p), p))
+            except OSError:
+                pass
+    return [p for _, p in sorted(out, reverse=True)]
+
+
+def prune_rotated(path, keep):
+    """Delete all but the `keep` newest rotated generations of `path`.
+    Returns the deleted paths. Without this, a flood fills the disk 100 MB at a time."""
+    gone = []
+    for p in rotated(path)[max(0, int(keep)):]:
+        try:
+            os.remove(p)
+            gone.append(p)
+        except OSError:
+            pass
+    return gone
+
+
+def tail_alerts(path, last, want=None, skipped=None, since=None, follow_rotated=False, **kw):
     """The newest `last` alerts in `path`, oldest first.
 
     want: optional predicate; alerts it rejects are not collected (and do not
     use up the `last` slots), only counted in skipped["n"] if a dict is given.
     This keeps a flood of ignored decoder alerts from pushing real evidence
     out of the window.
-    since: optional datetime; reading stops at the first older alert."""
+    since: optional datetime; reading stops at the first older alert.
+    follow_rotated: continue into the rotated generations of the file."""
     found = []
-    for al in iter_back(path, **kw):
-        if since is not None:
-            t = alert_time(al.get("ts"))
-            if t is not None and t < since:
+    for p in [path] + (rotated(path) if follow_rotated else []):
+        done = False
+        for al in iter_back(p, **kw):
+            if since is not None:
+                t = alert_time(al.get("ts"))
+                if t is not None and t < since:
+                    done = True
+                    break
+            if want is not None and not want(al):
+                if skipped is not None:
+                    skipped["n"] = skipped.get("n", 0) + 1
+                continue
+            found.append(al)
+            if len(found) >= last:
+                done = True
                 break
-        if want is not None and not want(al):
-            if skipped is not None:
-                skipped["n"] = skipped.get("n", 0) + 1
-            continue
-        found.append(al)
-        if len(found) >= last:
+        if done:
             break
     found.reverse()
     return found

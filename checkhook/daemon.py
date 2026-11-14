@@ -168,10 +168,17 @@ def main():
 
     # ---- expiry ---------------------------------------------------------------
     def expiry():
+        from checkhook.alerts import prune_rotated
         while not stop.wait(c["daemon"]["expiry_interval"]):
             n = enforcer.reconcile()
             if n:
                 log.info(f"expired {n} block(s)")
+            # rotated alert files pile up 100 MB at a time during a flood
+            for path, keep in ((c["ids"].get("alert_file"), c["ids"].get("keep_rotated", 3)),
+                               (c["ml"].get("alert_file"), 1)):
+                if path:
+                    for gone in prune_rotated(path, keep):
+                        log.info(f"removed old alert file {gone}")
     workers.append(supervised("expiry", expiry, stop, log))
 
     # ---- triage (separate process: a hung or crashing LLM call can't hurt us) --

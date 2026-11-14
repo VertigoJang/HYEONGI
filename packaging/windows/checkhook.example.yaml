@@ -17,6 +17,7 @@ ids:                      # Suricata eve.json (written by the checkhook-suricata
   enabled: true
   alert_file: C:\ProgramData\CheckHook\suricata\eve.json
   ignore_rules: []          # rules that never lead to a block, as "1:sid"
+  keep_rotated: 3          # rotated alert files to keep (Snort renames one at 100 MB)
 
 ml:                       # flow classifier (nfstream + Npcap)
   enabled: true
