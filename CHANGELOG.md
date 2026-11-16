@@ -31,6 +31,23 @@
   (Snort renames a full alert_json to `<name>.<time>`), so a span that
   crosses a rotation is counted whole.
 
+**IDS capture length**
+- rc20: Snort runs with `-s 65535`. With GRO on (the default for most NICs and
+  wifi drivers), the kernel hands Snort merged packets far larger than its
+  default 1518-byte snaplen. Snort cut them and raised 116:6 "IPv4 datagram
+  length > captured length" (70 % of all alerts on the laptop) and 137:2 TLS
+  anomalies, and the cut-off payload was never inspected. Side by side on the
+  same traffic for 3 minutes: 116:6 63 -> 0, 137:2 26 -> 0, while unrelated
+  signatures matched (129:15 8/10, 1:254 8/8). Re-run `install-snort.sh` to
+  regenerate the service.
+
+**Lab**
+- rc20: `packaging/lab-netns.sh up|down|status` builds an attacker without a VM:
+  network namespace `ckatk` (10.199.0.2) joined to the host by a veth pair
+  (`ck-host`, 10.199.0.1), no route anywhere else. `checkhook demo on ck-host`
+  watches it. veth supports native XDP, so generic and native can be compared
+  on one machine.
+
 **Status**
 - rc19: manual blocks (app button or `checkhook ctl block`) are counted. They
   are logged to `/var/lib/checkhook/manual-blocks.log`; `checkhook stats` and

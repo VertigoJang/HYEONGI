@@ -1,6 +1,7 @@
 """Demo mode: point CheckHook at an isolated lab interface for a presentation.
 
-  sudo checkhook demo on vboxnet0     # VirtualBox host-only network to a Kali VM
+  sudo checkhook demo on vboxnet0     # VirtualBox host-only network to an attacker VM
+  sudo checkhook demo on ck-host      # attacker in a network namespace (packaging/lab-netns.sh)
   sudo checkhook demo on vboxnet0 --model ~/checkhook-data/checkhook-model-v1.joblib
                                       # ... and use this ML model only while in demo mode
   sudo checkhook demo status
@@ -59,7 +60,8 @@ def on(iface, model=None):
     if os.path.exists(STATE):
         sys.exit("[x] demo mode is already on (sudo checkhook demo off first)")
     if not os.path.exists(f"/sys/class/net/{iface}"):
-        sys.exit(f"[x] no interface {iface}. Start the Kali VM with its host-only adapter first "
+        sys.exit(f"[x] no interface {iface}. Start the attacker VM with its host-only adapter, or "
+                 "run `sudo bash packaging/lab-netns.sh up` for ck-host, first "
                  "(VirtualBox creates vboxnet0 then); ip -br link")
     os.makedirs(STATE)
     shutil.copy2(CONF, os.path.join(STATE, "checkhook.yaml"))

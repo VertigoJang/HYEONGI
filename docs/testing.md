@@ -25,6 +25,22 @@
   않았습니다.
 - 메모리는 4 GB 이상을 권합니다. LLM을 가상 머신 안에서 돌리려면 그보다 훨씬 많이 필요합니다.
 
+## 가상 머신 없이 공격 실습: 네트워크 네임스페이스
+
+공격용 가상 머신이 없어도 같은 컴퓨터 안에 격리된 공격자를 만들 수 있습니다.
+
+```bash
+sudo bash packaging/lab-netns.sh up          # ckatk(10.199.0.2) ⇄ ck-host(10.199.0.1)
+sudo checkhook demo on ck-host --model 모델파일
+sudo ip netns exec ckatk nmap -sS -p 1-1000 10.199.0.1
+sudo ip netns exec ckatk timeout 10 hping3 -S -p 80 -i u1000 10.199.0.1
+sudo checkhook demo off
+sudo bash packaging/lab-netns.sh down
+```
+
+- 공격자 네임스페이스에는 기본 경로가 없어 10.199.0.1 말고는 아무 데도 닿지 않습니다.
+- veth는 native XDP를 지원하므로 같은 링크에서 generic과 native를 비교할 수 있습니다.
+
 ## LLM(Ollama)
 
 가상 머신마다 Ollama를 설치하지 않아도 시험은 됩니다. Ollama에 연결하지 못하면 자체 시험은
