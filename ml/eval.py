@@ -16,7 +16,7 @@ import argparse
 import numpy as np
 import pandas as pd
 import joblib
-from checkhook.features import FEATURES
+from hyeongi.features import FEATURES
 
 
 def load(model_path):

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# install-xdp.sh — switch CheckHook's enforcement backend to XDP.
+# install-xdp.sh — switch HYEONGI's enforcement backend to XDP.
 #
 #   sudo bash packaging/install-xdp.sh [--iface IFACE] [--mode generic|native]
 #   sudo bash packaging/install-xdp.sh --revert        # back to nftables
 #
-# Builds checkhook/bpf/checkhook_xdp.c, installs checkhook-xdp.service (attaches the
-# program at boot), sets `backend: xdp` in /etc/checkhook/checkhook.yaml (backup
+# Builds hyeongi/bpf/hyeongi_xdp.c, installs hyeongi-xdp.service (attaches the
+# program at boot), sets `backend: xdp` in /etc/hyeongi/hyeongi.yaml (backup
 # kept) and restarts the detectors. `enforce:` is NOT changed — if it is false,
 # nothing is blocked either way.
 
@@ -14,12 +14,12 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 . "$HERE/lib/common.sh"
 ROOT="$(cd "$HERE/.." && pwd)"
-CONF=/etc/checkhook/checkhook.yaml
-UNIT=/etc/systemd/system/checkhook-xdp.service
+CONF=/etc/hyeongi/hyeongi.yaml
+UNIT=/etc/systemd/system/hyeongi-xdp.service
 [[ -f "$CONF" ]] || { echo "run packaging/install-services.sh first ($CONF missing)" >&2; exit 1; }
 
 restart_detectors() {
-  for s in checkhookd; do
+  for s in hyeongid; do
     systemctl is-enabled --quiet "$s" 2>/dev/null && systemctl restart "$s" || true
   done
 }
@@ -28,9 +28,9 @@ if [[ "${1:-}" == "--revert" ]]; then
   cp "$CONF" "$CONF.bak"
   sed -i 's/^backend: .*/backend: nft              # enforcement backend (nft | xdp)/' "$CONF"
   restart_detectors
-  systemctl disable --now checkhook-xdp 2>/dev/null || true
+  systemctl disable --now hyeongi-xdp 2>/dev/null || true
   rm -f "$UNIT"; systemctl daemon-reload
-  echo "backend -> nft; XDP detached and checkhook-xdp removed."
+  echo "backend -> nft; XDP detached and hyeongi-xdp removed."
   exit 0
 fi
 
@@ -65,17 +65,17 @@ fi
 echo "[+] $CONF: backend: xdp, xdp.iface: $IFACE, xdp.mode: $MODE  (backup: $CONF.bak)"
 
 # build + service
-( cd "$ROOT" && python3 -m checkhook.xdp build )
-sed "s|__ROOT__|$ROOT|g" "$HERE/checkhook-xdp.service" > "$UNIT"; chmod 0644 "$UNIT"
+( cd "$ROOT" && python3 -m hyeongi.xdp build )
+sed "s|__ROOT__|$ROOT|g" "$HERE/hyeongi-xdp.service" > "$UNIT"; chmod 0644 "$UNIT"
 systemctl daemon-reload
-systemctl enable checkhook-xdp >/dev/null 2>&1
-systemctl restart checkhook-xdp
+systemctl enable hyeongi-xdp >/dev/null 2>&1
+systemctl restart hyeongi-xdp
 restart_detectors
 
 sleep 2
 echo
-echo "checkhook-xdp   : $(systemctl is-active checkhook-xdp || true)"
-echo "checkhookd    : $(systemctl is-active checkhookd || true)"
-( cd "$ROOT" && python3 -m checkhook.xdp status ) || true
+echo "hyeongi-xdp   : $(systemctl is-active hyeongi-xdp || true)"
+echo "hyeongid    : $(systemctl is-active hyeongid || true)"
+( cd "$ROOT" && python3 -m hyeongi.xdp status ) || true
 echo
 echo "revert to nftables: sudo bash packaging/install-xdp.sh --revert"

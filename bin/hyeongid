@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# hyeongid — the HYEONGI daemon (IDS bridge, ML detector, block expiry,
+# LLM triage in one process). Normally started by systemd (hyeongid.service).
+#   hyeongid [--config /etc/hyeongi/hyeongi.yaml]
+set -euo pipefail
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+cd "$ROOT"
+exec python3 -m hyeongi.daemon "$@"

@@ -30,11 +30,11 @@
 공격용 가상 머신이 없어도 같은 컴퓨터 안에 격리된 공격자를 만들 수 있습니다.
 
 ```bash
-sudo bash packaging/lab-netns.sh up          # ckatk(10.199.0.2) ⇄ ck-host(10.199.0.1)
-sudo checkhook demo on ck-host --model 모델파일
-sudo ip netns exec ckatk nmap -n -sS -p 1-1000 10.199.0.1
-sudo ip netns exec ckatk timeout 10 hping3 -S -p 80 -i u1000 10.199.0.1
-sudo checkhook demo off
+sudo bash packaging/lab-netns.sh up          # hyatk(10.199.0.2) ⇄ hy-host(10.199.0.1)
+sudo hyeongi demo on hy-host --model 모델파일
+sudo ip netns exec hyatk nmap -n -sS -p 1-1000 10.199.0.1
+sudo ip netns exec hyatk timeout 10 hping3 -S -p 80 -i u1000 10.199.0.1
+sudo hyeongi demo off
 sudo bash packaging/lab-netns.sh mode drop   # 피해자 응답 방식 전환 (rst|drop|reject)
 sudo bash packaging/lab-netns.sh down
 ```
@@ -58,7 +58,7 @@ LLM 부분까지 시험하려면 한 대(예: Windows 11 실제 컴퓨터)에서
 배포판별 패키지 이름은 `docs/linux.md`에 있습니다.
 
 ```bash
-git clone https://github.com/VertigoJang/checkhook ~/checkhook && cd ~/checkhook
+git clone https://github.com/VertigoJang/hyeongi ~/hyeongi && cd ~/hyeongi
 sudo bash packaging/install-capture.sh
 sudo bash packaging/install-services.sh
 # 시그니처 탐지기: 배포판의 Suricata를 설치하고 suricata.yaml의 interface를 맞춘 뒤
@@ -76,7 +76,7 @@ sudo bash packaging/selftest.sh
 실행합니다.
 
 ```powershell
-git clone https://github.com/VertigoJang/checkhook C:\checkhook; cd C:\checkhook
+git clone https://github.com/VertigoJang/hyeongi C:\hyeongi; cd C:\hyeongi
 powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1
 powershell -ExecutionPolicy Bypass -File packaging\windows\selftest.ps1
 ```
@@ -94,7 +94,7 @@ Windows 10은 2025년 10월 14일에 마이크로소프트의 일반 지원이 �
 |---|---|
 | system | 배포판, 커널, Python 버전, 가상화 여부, 필수 패키지 |
 | config | 설정 파일을 읽을 수 있는지, 설정된 인터페이스가 실제로 있는지 |
-| services / tasks | `checkhookd`와 함께 설치한 서비스가 실행 중인지 |
+| services / tasks | `hyeongid`와 함께 설치한 서비스가 실행 중인지 |
 | enforcement | 차단 목록에 넣고 지우는 과정이 실제로 되는지 |
 | detection | 경보 형식을 읽을 수 있는지, 경보 파일이 쌓이는지 |
 | capture | 학습용 수집 파일이 최근에 쓰였는지 |
@@ -111,7 +111,7 @@ Windows 10은 2025년 10월 14일에 마이크로소프트의 일반 지원이 �
 ```bash
 curl -s http://testmynids.org/uid/index.html
 sleep 5
-sudo checkhook report
+sudo hyeongi report
 ```
 
 보고서에 경보 1건과 함께 차단 대상 IP가 나오면 탐지, 차단 목록, 검토가 이어져 동작하는

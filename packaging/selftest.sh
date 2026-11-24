@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# selftest.sh — check a CheckHook install end to end (Linux).
+# selftest.sh — check a HYEONGI install end to end (Linux).
 #
 #   sudo bash packaging/selftest.sh
 #
@@ -30,8 +30,8 @@ TEST_IP6=2001:db8::250      # RFC 3849 documentation prefix, never routed
 
 # ---------------------------------------------------------------- system ----
 section "system"
-VER="$(python3 -m checkhook.diag version 2>/dev/null || echo '?')"
-echo "  checkhook : $VER"
+VER="$(python3 -m hyeongi.diag version 2>/dev/null || echo '?')"
+echo "  hyeongi : $VER"
 echo "  distro    : $(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-unknown}") (family: $(distro_family))"
 echo "  kernel    : $(uname -r)"
 echo "  python    : $(python3 --version 2>&1)"
@@ -44,7 +44,7 @@ command -v nft >/dev/null && pass "nft" || fail "nft missing -> $(pkg_install_cm
 
 # ---------------------------------------------------------------- config ----
 section "config"
-CONF_JSON="$(python3 -m checkhook.diag config 2>&1)"
+CONF_JSON="$(python3 -m hyeongi.diag config 2>&1)"
 if ! printf '%s' "$CONF_JSON" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then
   fail "config does not load: $CONF_JSON"
   printf '\nsummary: %d pass, %d warn, %d fail\n' "$PASS" "$WARN" "$FAIL"; exit "$FAIL"
@@ -65,14 +65,14 @@ done
 section "services"
 unit_state() { systemctl is-active "$1" 2>/dev/null; }
 installed() { [[ -f "/etc/systemd/system/$1.service" ]]; }
-[[ "$(unit_state checkhookd)" == active ]] && pass "checkhookd active" \
-  || fail "checkhookd not active -> journalctl -u checkhookd -n 30"
-for u in checkhook-capture checkhook-ids checkhook-xdp; do
+[[ "$(unit_state hyeongid)" == active ]] && pass "hyeongid active" \
+  || fail "hyeongid not active -> journalctl -u hyeongid -n 30"
+for u in hyeongi-capture hyeongi-ids hyeongi-xdp; do
   if installed "$u"; then
     [[ "$(unit_state $u)" == active ]] && pass "$u active" || fail "$u installed but not active -> journalctl -u $u -n 30"
   else
     case "$u" in
-      checkhook-xdp) [[ "$BACKEND" == xdp ]] && fail "backend is xdp but checkhook-xdp is not installed" || echo "  [ -- ] $u not installed (backend $BACKEND)";;
+      hyeongi-xdp) [[ "$BACKEND" == xdp ]] && fail "backend is xdp but hyeongi-xdp is not installed" || echo "  [ -- ] $u not installed (backend $BACKEND)";;
       *) echo "  [ -- ] $u not installed";;
     esac
   fi
@@ -81,16 +81,16 @@ done
 # ----------------------------------------------------------- enforcement ----
 section "enforcement ($BACKEND)"
 if [[ "$BACKEND" == xdp ]]; then
-  python3 -m checkhook.xdp status >/tmp/checkhook-selftest.$$ 2>&1
-  grep -q "loaded (" /tmp/checkhook-selftest.$$ \
-    && pass "XDP loaded: $(grep -m1 'attached to' /tmp/checkhook-selftest.$$ | sed 's/^ *//')" \
-    || fail "XDP not loaded: $(head -1 /tmp/checkhook-selftest.$$)"
-  rm -f /tmp/checkhook-selftest.$$
+  python3 -m hyeongi.xdp status >/tmp/hyeongi-selftest.$$ 2>&1
+  grep -q "loaded (" /tmp/hyeongi-selftest.$$ \
+    && pass "XDP loaded: $(grep -m1 'attached to' /tmp/hyeongi-selftest.$$ | sed 's/^ *//')" \
+    || fail "XDP not loaded: $(head -1 /tmp/hyeongi-selftest.$$)"
+  rm -f /tmp/hyeongi-selftest.$$
 fi
-if [[ "$BACKEND" == nft ]] && ! { nft list table ip checkhook && nft list table ip6 checkhook; } >/dev/null 2>&1; then
-  warn "nft tables 'ip checkhook' / 'ip6 checkhook' not both there yet (checkhookd creates them on start)"
+if [[ "$BACKEND" == nft ]] && ! { nft list table ip hyeongi && nft list table ip6 hyeongi; } >/dev/null 2>&1; then
+  warn "nft tables 'ip hyeongi' / 'ip6 hyeongi' not both there yet (hyeongid creates them on start)"
 fi
-BL=(python3 -m checkhook.blocklist --backend "$BACKEND")
+BL=(python3 -m hyeongi.blocklist --backend "$BACKEND")
 for T in "$TEST_IP" "$TEST_IP6"; do
   if "${BL[@]}" add "$T" --timeout 2m >/dev/null 2>&1; then
     if "${BL[@]}" list 2>/dev/null | grep -qw -- "$T"; then pass "add $T -> listed"
@@ -105,7 +105,7 @@ done
 
 # --------------------------------------------------------------- detection ---
 section "detection"
-python3 -m checkhook.diag parse >/dev/null 2>&1 && pass "alert parser reads Snort 3 and Suricata lines" || fail "alert parser"
+python3 -m hyeongi.diag parse >/dev/null 2>&1 && pass "alert parser reads Snort 3 and Suricata lines" || fail "alert parser"
 if [[ "$(cfg ids)" != True ]]; then
   echo "  [ -- ] ids disabled in config"
 elif [[ -r "$ALERT" ]]; then
@@ -121,18 +121,18 @@ else echo "  [ -- ] no ML model yet ($(cfg model)) — ML detection off until tr
 
 # ---------------------------------------------------------------- capture ----
 section "capture"
-if installed checkhook-capture; then
-  NEWEST="$(ls -t /var/lib/checkhook/benign*.pcap* 2>/dev/null | head -1)"
+if installed hyeongi-capture; then
+  NEWEST="$(ls -t /var/lib/hyeongi/benign*.pcap* 2>/dev/null | head -1)"
   if [[ -n "$NEWEST" ]]; then
     AGE=$(( $(date +%s) - $(stat -c %Y "$NEWEST") ))
-    SIZE="$(du -sh /var/lib/checkhook 2>/dev/null | cut -f1)"
+    SIZE="$(du -sh /var/lib/hyeongi 2>/dev/null | cut -f1)"
     (( AGE < 600 )) && pass "capture writing: $NEWEST (${AGE}s ago, total $SIZE)" \
       || warn "newest capture file is ${AGE}s old: $NEWEST (no traffic, or tcpdump stuck)"
   else
-    fail "checkhook-capture installed but no /var/lib/checkhook/benign*.pcap* (SELinux/AppArmor? journalctl -u checkhook-capture)"
+    fail "hyeongi-capture installed but no /var/lib/hyeongi/benign*.pcap* (SELinux/AppArmor? journalctl -u hyeongi-capture)"
   fi
 else
-  echo "  [ -- ] checkhook-capture not installed"
+  echo "  [ -- ] hyeongi-capture not installed"
 fi
 
 FLOWDIR="$(printf '%s' "$CONF_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["flows"])')"
@@ -145,7 +145,7 @@ if python3 -c 'import nfstream' 2>/dev/null; then
     (( AGE < 900 )) && pass "flow log: $ROWS flows in $FLOWDIR (newest ${AGE}s ago)" \
       || warn "flow log: newest file is ${AGE}s old ($NEWEST)"
   else
-    warn "flow log: no CSV in $FLOWDIR yet (written as flows finish; journalctl -u checkhookd | grep flows)"
+    warn "flow log: no CSV in $FLOWDIR yet (written as flows finish; journalctl -u hyeongid | grep flows)"
   fi
 else
   warn "nfstream not installed: no flow log and no ML (pip install nfstream)"
@@ -153,7 +153,7 @@ fi
 
 # ----------------------------------------------------------- check (LLM) ----
 section "check (LLM triage)"
-CTX="$(python3 -m checkhook.diag network)"
+CTX="$(python3 -m hyeongi.diag network)"
 [[ "$CTX" == *"dns=-"* ]] && warn "could not read this host's DNS servers ($CTX)" || pass "local network: $CTX"
 HOST="$(cfg host)"; LLM="$(cfg llm)"
 TAGS="$(python3 -c "import urllib.request,sys; print(urllib.request.urlopen('$HOST/api/tags', timeout=5).read().decode())" 2>/dev/null)"
@@ -164,10 +164,10 @@ elif printf '%s' "$TAGS" | grep -q "\"$LLM\""; then
 else
   warn "Ollama at $HOST is up but model $LLM is missing -> ollama pull $LLM"
 fi
-if python3 -m checkhook.triage --print-prompt --alert-file "$ALERT" --backend "$BACKEND" >/dev/null 2>&1; then
+if python3 -m hyeongi.triage --print-prompt --alert-file "$ALERT" --backend "$BACKEND" >/dev/null 2>&1; then
   pass "triage builds its prompt"
 else
-  fail "triage: $(python3 -m checkhook.triage --print-prompt --alert-file "$ALERT" --backend "$BACKEND" 2>&1 | tail -1)"
+  fail "triage: $(python3 -m hyeongi.triage --print-prompt --alert-file "$ALERT" --backend "$BACKEND" 2>&1 | tail -1)"
 fi
 
 printf '\nsummary: %d pass, %d warn, %d fail\n' "$PASS" "$WARN" "$FAIL"

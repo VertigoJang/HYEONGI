@@ -1,0 +1,22 @@
+[Unit]
+# HYEONGI-managed Snort 3 IDS. Config: /etc/hyeongi/snort/hyeongi.lua (generated
+# by install-snort.sh; it includes your base snort.lua and adds JSON alerts,
+# port-scan detection and HYEONGI's rules). Alerts: /var/log/hyeongi/snort/
+Description=HYEONGI IDS (Snort 3, JSON alerts for hyeongid)
+After=network-online.target
+Wants=network-online.target
+Before=hyeongid.service
+
+# -s 65535: with GRO the kernel hands over merged packets far larger than Snort's
+# default 1518-byte snaplen; truncated, they raised 116:6 "IPv4 datagram length >
+# captured length" and 137:2 TLS anomalies and their payload went uninspected.
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/install -d -m 0755 /var/log/hyeongi/snort
+ExecStart=__SNORT__ -c /etc/hyeongi/snort/hyeongi.lua -i __IFACE__ -l /var/log/hyeongi/snort -A alert_json -k none -s 65535 -q
+Restart=on-failure
+RestartSec=10
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

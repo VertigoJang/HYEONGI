@@ -1,0 +1,18 @@
+[Unit]
+# HYEONGI XDP enforcement: attaches the XDP program and pins its blocklist map
+# at /sys/fs/bpf/hyeongi. Detectors (backend: xdp) only update that map.
+# Interface/mode: `xdp:` in /etc/hyeongi/hyeongi.yaml.
+Description=HYEONGI XDP enforcement (eBPF blocklist on the NIC)
+After=network-online.target
+Wants=network-online.target
+Before=hyeongid.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=__ROOT__
+ExecStart=/usr/bin/python3 -m hyeongi.xdp load
+ExecStop=/usr/bin/python3 -m hyeongi.xdp unload
+
+[Install]
+WantedBy=multi-user.target

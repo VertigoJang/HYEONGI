@@ -1,0 +1,55 @@
+# HYEONGI configuration (Windows) — C:\ProgramData\HYEONGI\hyeongi.yaml
+#
+# After editing, restart the daemon (as administrator):
+#   hyeongi restart   (as administrator)
+#
+# SAFETY: enforcement is OFF until you set `enforce: true`. While it is false,
+# detectors only log what they WOULD block (hyeongi logs).
+
+enforce: false            # true = add attacker IPs to the Windows Firewall blocklist
+backend: winfw            # Windows Defender Firewall rules (group "HYEONGI")
+block_timeout: 1h         # blocks expire on their own (hyeongid removes them)
+block_private: false      # never block private/LAN addresses unless true
+skip: []                  # IPs that must never be blocked, e.g. [192.168.0.1]
+protect_local: true       # never block this host's current DNS servers, gateway, own addresses
+# per-network enforcement: list your home gateway MAC (hyeongi ctl trust-here);
+# then every other network is observe-only. Empty = off (enforce everywhere).
+networks: {trusted_gateways: []}
+
+ids:                      # Suricata eve.json (written by the hyeongi-suricata task)
+  enabled: true
+  alert_file: C:\ProgramData\HYEONGI\suricata\eve.json
+  ignore_rules: []          # rules that never lead to a block, as "1:sid"
+  keep_rotated: 3          # rotated alert files to keep (Snort renames one at 100 MB)
+
+ml:                       # flow classifier (nfstream + Npcap)
+  enabled: true
+  iface: auto             # auto = adapter with the default route; or a name like "Wi-Fi"
+  model: C:\ProgramData\HYEONGI\model.joblib
+  threshold: 0.9
+  idle: 15
+  active: 120
+
+capture:                  # flow logging for ML training data (no payload stored)
+  enabled: true
+  dir: C:\ProgramData\HYEONGI\flows
+
+triage:                   # "Inspection": read-only LLM review of flagged IPs (local Ollama); never blocks or unblocks
+  enabled: true
+  alert_file: C:\ProgramData\HYEONGI\suricata\eve.json
+  last: 500
+  summary_minutes: 60      # per-IP evidence for the LLM covers this many minutes
+  settle: 20               # wait until detectors stop reporting (seconds, 0 = off)
+  model: qwen2.5:7b
+  host: http://127.0.0.1:11434
+  timeout: 300            # seconds: queue behind another Ollama client + cold load + answer
+  num_ctx: 4096           # context sent to Ollama; the report warns when the prompt fills it
+  keep_alive: 5m          # how long Ollama keeps the model loaded after a review
+  retries: 1              # after a refused connection or a 5xx, 10 s apart
+  fallback_model: qwen2.5:3b   # used if the main model fails or runs mostly on the CPU (empty = off)
+  lang: Korean
+  out: C:\ProgramData\HYEONGI\triage\report.txt
+
+daemon:
+  expiry_interval: 60     # seconds between expiry checks
+  triage_interval: 3600   # seconds between LLM reports

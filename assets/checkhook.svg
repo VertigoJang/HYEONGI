@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="CheckHook">
-  <title>CheckHook</title>
-  <rect x="8" y="8" width="240" height="240" rx="56" fill="#14171d"/>
-  <!-- shield -->
-  <path d="M 128 30 L 206 58 L 206 124 C 206 176, 172 210, 128 228 C 84 210, 50 176, 50 124 L 50 58 Z" fill="#c9d1d9" stroke-linejoin="round"/>
-  <!-- C -->
-  <path d="M 162 96 A 38 38 0 1 0 162 152" fill="none" stroke="#e23b2e" stroke-width="24" stroke-linecap="round"/>
-</svg>

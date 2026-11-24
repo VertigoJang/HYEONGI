@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=HYEONGI
+GenericName=AI Firewall
+Comment=AI firewall status, alerts, blocklist and LLM review
+# Paths below are filled in by install-desktop.sh at install time.
+Exec=__HYEONGI_DIR__/bin/hyeongi gui
+Icon=__HYEONGI_ICON__
+Terminal=false
+Categories=Security;Network;System;
+Keywords=firewall;xdp;ebpf;nftables;ids;snort;ml;ai;security;
+StartupNotify=true
+StartupWMClass=HYEONGI

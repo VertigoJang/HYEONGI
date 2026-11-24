@@ -1,7 +1,7 @@
 # keep line endings right on every platform
 *.sh        text eol=lf
-checkhook     text eol=lf
-checkhookd    text eol=lf
+hyeongi     text eol=lf
+hyeongid    text eol=lf
 *.service   text eol=lf
 *.timer     text eol=lf
 *.py        text eol=lf

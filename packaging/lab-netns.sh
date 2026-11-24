@@ -1,39 +1,39 @@
 #!/usr/bin/env bash
-# lab-netns.sh — an isolated attacker for testing CheckHook on this host, without a VM.
+# lab-netns.sh — an isolated attacker for testing HYEONGI on this host, without a VM.
 #
-#   sudo bash packaging/lab-netns.sh up       # create netns "ckatk" + veth pair
+#   sudo bash packaging/lab-netns.sh up       # create netns "hyatk" + veth pair
 #   sudo bash packaging/lab-netns.sh status
 #   sudo bash packaging/lab-netns.sh mode rst|drop|reject   # how the victim answers
 #   sudo bash packaging/lab-netns.sh down     # remove everything it created
 #
 # Topology (no route to any other network; nothing is forwarded or NATed):
 #
-#   host netns                      netns "ckatk"
-#   ck-host 10.199.0.1/24  <=veth=>  ck-atk 10.199.0.2/24
+#   host netns                      netns "hyatk"
+#   hy-host 10.199.0.1/24  <=veth=>  hy-atk 10.199.0.2/24
 #           fd99:199::1/64            fd99:199::2/64   (IPv6, if enabled on this host)
 #
-# fd99:199::/64 is unique-local (the IPv6 counterpart of RFC1918): CheckHook blocks it
-# only with block_private, which `checkhook demo on ck-host` turns on.
+# fd99:199::/64 is unique-local (the IPv6 counterpart of RFC1918): HYEONGI blocks it
+# only with block_private, which `hyeongi demo on hy-host` turns on.
 #
 # Victim response mode (for ML training across environments) only affects traffic
-# arriving on ck-host, in an isolated table "inet cklab" (IPv4 and IPv6, priority -140):
+# arriving on hy-host, in an isolated table "inet hylab" (IPv4 and IPv6, priority -140):
 #   rst    - no firewall: closed TCP -> RST, closed UDP -> ICMP port-unreachable (Kali)
 #   drop   - silent: new inbound dropped, host never answers (firewalld / Windows)
 #   reject - explicit: new inbound -> ICMP admin-prohibited (a REJECT firewall)
 # Snort sniffs the link before netfilter, so it still sees every attack packet;
 # only the victim's *answer* changes. Clear with: mode rst (or down).
 #
-# Run the attacker side with:   sudo ip netns exec ckatk <command>
-#   e.g. sudo ip netns exec ckatk nmap -sS -p 1-1000 10.199.0.1
-#        sudo ip netns exec ckatk nmap -6 -sS -p 1-1000 fd99:199::1
-# Point CheckHook at the host side: sudo checkhook demo on ck-host [--model FILE]
+# Run the attacker side with:   sudo ip netns exec hyatk <command>
+#   e.g. sudo ip netns exec hyatk nmap -sS -p 1-1000 10.199.0.1
+#        sudo ip netns exec hyatk nmap -6 -sS -p 1-1000 fd99:199::1
+# Point HYEONGI at the host side: sudo hyeongi demo on hy-host [--model FILE]
 #
 # veth supports native XDP, so `xdp.mode: native` can be compared with generic
 # on the same link (see benchmark/).
 set -euo pipefail
 [[ $EUID -eq 0 ]] || { echo "run with sudo." >&2; exit 1; }
 
-NS=ckatk; H=ck-host; A=ck-atk; LABTBL=cklab
+NS=hyatk; H=hy-host; A=hy-atk; LABTBL=hylab
 HIP=10.199.0.1; AIP=10.199.0.2; PFX=24
 HIP6=fd99:199::1; AIP6=fd99:199::2
 
@@ -68,7 +68,7 @@ case "${1:-}" in
     if [[ $V6 == 1 ]]; then echo "    IPv6   : attacker $AIP6 -> host $HIP6"
     else echo "    IPv6   : not available on this host (IPv4 lab only)"; fi
     echo "    attack : sudo ip netns exec $NS nmap -sS -p 1-1000 $HIP"
-    echo "    watch  : sudo checkhook demo on $H [--model FILE]"
+    echo "    watch  : sudo hyeongi demo on $H [--model FILE]"
     ;;
   mode)
     ip netns list | grep -qw "$NS" || { echo "[x] bring the lab up first: $0 up" >&2; exit 1; }

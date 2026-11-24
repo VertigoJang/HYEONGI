@@ -1,0 +1,336 @@
+"""Live status for the desktop app and `hyeongi stats`.
+
+hyeongid keeps a small in-memory board (recent alerts, what it blocked or
+would block, flow count) and writes it to status.json every few seconds. The
+file is world-readable so the app can show status without root; it holds only
+what `hyeongi logs` already shows. Changing anything still needs root (see
+hyeongi.ctl).
+
+  python3 -m hyeongi.status          # Korean summary (hyeongi stats)
+  python3 -m hyeongi.status --json   # raw status.json
+"""
+import collections, datetime, glob, json, os, subprocess, sys, threading, time
+from hyeongi.config import WINDOWS, PROGRAMDATA
+
+DATA = PROGRAMDATA if WINDOWS else "/var/lib/hyeongi"
+PATH = os.path.join(DATA, "status.json")
+MANUAL = os.path.join(DATA, "manual-blocks.log")   # written by `hyeongi ctl block/unblock`
+
+
+def log_manual(ip, action):
+    """Record a manual block/unblock (the daemon does not see those, so the
+    day's block count used to miss them)."""
+    try:
+        os.makedirs(DATA, exist_ok=True)
+        with open(MANUAL, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"t": time.time(), "day": datetime.date.today().isoformat(),
+                                "ip": ip, "action": action}) + "\n")
+    except OSError:
+        pass
+
+
+def manual_today(day):
+    n = 0
+    try:
+        with open(MANUAL, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if e.get("day") == day and e.get("action") == "block":
+                    n += 1
+    except OSError:
+        pass
+    return n
+
+
+# Detections that say most about an IP, best first; used for the "reason" shown.
+def _rank(key):
+    gid, _, sid = key.partition(":")
+    if key == "1:1100010":
+        return 0          # SYN flood
+    if gid == "122":
+        return 1          # port scan
+    if key == "1:1100011":
+        return 2          # SSH brute force
+    if gid == "9000":
+        return 3          # ML
+    return 4
+
+
+def best_reason(sigs):
+    """Representative reason for a flagged IP: the strongest kind of detection,
+    then the most frequent, with counts (e.g. "SYN flood x3 · ML x1990")."""
+    if not sigs:
+        return ""
+    order = sorted(sigs.items(), key=lambda kv: (_rank(kv[0]), -kv[1]["n"]))
+    top = [f"{v['msg']} x{v['n']}" for _, v in order[:2]]
+    more = len(order) - len(top)
+    return " · ".join(top) + (f" (+{more}종)" if more > 0 else "")
+UNITS = ["hyeongid", "hyeongi-ids", "hyeongi-xdp", "hyeongi-capture"]
+TASKS = ["hyeongid", "hyeongi-suricata"]
+
+
+def count_flows(flow_dir):
+    n = 0
+    for f in glob.glob(os.path.join(flow_dir, "flows-*.csv")):
+        try:
+            with open(f, "rb") as fh:
+                lines = sum(1 for _ in fh)
+            n += max(0, lines - 1)
+        except OSError:
+            pass
+    return n
+
+
+def service_states():
+    out = {}
+    if WINDOWS:
+        ps = ("$ErrorActionPreference='SilentlyContinue'; foreach ($t in '"
+              + "','".join(TASKS) + "') { $x = Get-ScheduledTask -TaskName $t; "
+              "if ($x) { $t + '=' + $x.State } else { $t + '=missing' } }")
+        try:
+            r = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                               capture_output=True, text=True, timeout=20)
+            for line in r.stdout.splitlines():
+                k, _, v = line.strip().partition("=")
+                if k:
+                    out[k] = {"Running": "active", "Ready": "inactive"}.get(v, v.lower())
+        except Exception:
+            pass
+        return out
+    for u in UNITS:
+        if not os.path.exists(f"/etc/systemd/system/{u}.service"):
+            out[u] = "missing"
+            continue
+        try:
+            r = subprocess.run(["systemctl", "is-active", u], capture_output=True,
+                               text=True, timeout=5)
+            out[u] = r.stdout.strip() or "unknown"
+        except Exception:
+            out[u] = "unknown"
+    return out
+
+
+def live_services(s=None, stale=60):
+    """Service states as they are now, not as the last status.json has them.
+
+    hyeongid writes status.json itself, so once it stops the file keeps saying
+    "active" for every unit. Linux: ask systemd directly (no root needed).
+    Windows: asking costs a PowerShell start, so the file is used while it is
+    fresh; once it is older than `stale` seconds hyeongid is not writing it
+    and the states are reported as unknown instead of repeated."""
+    if not WINDOWS:
+        return service_states()
+    s = s or {}
+    if time.time() - s.get("written", 0) < stale:
+        return dict(s.get("services") or {})
+    return {k: "unknown" for k in (s.get("services") or TASKS)}
+
+
+class Board:
+    """Thread-safe record of what the daemon saw and did."""
+
+    def __init__(self, cfg, keep=200):
+        self.cfg = cfg
+        self.lock = threading.Lock()
+        self.started = time.time()
+        self.alerts = collections.deque(maxlen=keep)      # recent alerts with the action taken
+        self.flagged = {}                                 # ip -> {first, last, count, reason, action}
+        self.counts = collections.Counter()               # per local day: alerts, blocked, would_block
+        self.day = datetime.date.today().isoformat()
+        self.flows = None                                 # filled in by a background count
+        self.flow_logging = False
+        self.services = {}
+
+    def restore(self, path=None):
+        """Keep today's counts and flagged IPs across daemon restarts."""
+        try:
+            old = read(path)
+        except Exception:
+            return
+        if old.get("day") != self.day:
+            return
+        with self.lock:
+            self.counts.update(old.get("today") or {})
+            for f in old.get("flagged") or []:
+                ip = f.pop("ip", None)
+                if ip:
+                    self.flagged[ip] = f
+            for a in reversed(old.get("alerts") or []):
+                self.alerts.append(a)
+
+    def _rollover(self):
+        today = datetime.date.today().isoformat()
+        if today != self.day:
+            self.day, self.counts = today, collections.Counter()
+            self.flagged = {}
+
+    def alert(self, al, action):
+        """action: blocked | would-block | skip | ignored | review | recent (already acted on)."""
+        now = time.time()
+        with self.lock:
+            self._rollover()
+            self.counts["alerts"] += 1
+            self.alerts.append({"t": now, "src": al.get("src"), "gid": al.get("gid", 1),
+                                "sid": al.get("sid"), "msg": al.get("msg", ""),
+                                "ids": al.get("ids"), "action": action})
+            if action in ("blocked", "would-block"):
+                self.counts["blocked" if action == "blocked" else "would_block"] += 1
+                f = self.flagged.setdefault(al["src"], {"first": now, "count": 0})
+                f.update(last=now, action=action)
+                f["count"] += 1
+            f = self.flagged.get(al.get("src"))
+            if action == "review":
+                self.counts["review"] += 1
+            if f is not None and action in ("blocked", "would-block", "recent", "review"):
+                # every alert of a flagged IP feeds its reason, not only the first
+                gid = al.get("gid", 1)
+                key = f"{gid}:{al.get('sid')}"
+                msg = "HYEONGI-ML attack-like flow" if gid == 9000 else al.get("msg", "")
+                sigs = f.setdefault("sigs", {})
+                if key in sigs or len(sigs) < 30:
+                    sigs.setdefault(key, {"msg": msg[:80], "n": 0})["n"] += 1
+                f["reason"] = best_reason(sigs)[:200]
+
+    def flow(self):
+        with self.lock:
+            if self.flows is not None:
+                self.flows += 1
+
+    def snapshot(self, blocklist=None, paused=False):
+        c = self.cfg
+        with self.lock:
+            self._rollover()
+            try:
+                rep = c["triage"]["out"]
+                report = {"path": rep, "mtime": os.path.getmtime(rep)} if os.path.exists(rep) else None
+            except Exception:
+                report = None
+            from hyeongi import __version__
+            return {
+                "version": __version__, "written": time.time(), "started": self.started,
+                "enforce": bool(c["enforce"]), "backend": c["backend"], "paused": paused,
+                "demo": os.path.exists(os.path.join(DATA, "demo")),
+                "protect_local": bool(c.get("protect_local", True)), "skip": list(c["skip"]),
+                "block_timeout": c["block_timeout"], "services": dict(self.services),
+                "day": self.day, "today": dict(self.counts, manual=manual_today(self.day)),
+                "flows": self.flows,
+                "flow_logging": self.flow_logging,
+                "blocklist": sorted(blocklist) if blocklist is not None else None,
+                "flagged": [dict(ip=ip, **v) for ip, v in
+                            sorted(self.flagged.items(), key=lambda kv: -kv[1]["last"])][:100],
+                "alerts": list(self.alerts)[-100:][::-1], "report": report,
+            }
+
+
+def writer(board, bl, stop, flow_dir=None, interval=5):
+    """Daemon worker: refresh service states and write status.json."""
+    from hyeongi.collect import paused
+    board.flow_logging = bool(flow_dir)
+    if flow_dir and board.flows is None:
+        n = count_flows(flow_dir)
+        with board.lock:
+            board.flows = n
+    last_svc = 0
+    while True:
+        if time.time() - last_svc > (30 if WINDOWS else 10):
+            states = service_states()
+            with board.lock:
+                board.services = states
+            last_svc = time.time()
+        try:
+            ips = bl.ips() if bl is not None else None
+        except Exception:
+            ips = None
+        snap = board.snapshot(ips, paused())
+        if board.cfg.get("backend") == "xdp":
+            try:
+                from hyeongi import xdp
+                dropped, _ = xdp.stats()
+                snap["xdp_dropped"] = dropped
+            except Exception:
+                snap["xdp_dropped"] = None
+        tmp = PATH + ".tmp"
+        try:
+            os.makedirs(DATA, exist_ok=True)
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(snap, f, ensure_ascii=False)
+            if not WINDOWS:
+                os.chmod(tmp, 0o644)
+            os.replace(tmp, PATH)
+        except OSError:
+            pass
+        if stop.wait(interval):
+            return
+
+
+def read(path=None):
+    with open(path or PATH, encoding="utf-8") as f:
+        return json.load(f)
+
+
+ACTION_KO = {"blocked": "차단", "would-block": "차단 예정(기록만)", "skip": "예외",
+             "ignored": "무시 규칙", "review": "검토만(내용 규칙)", "recent": "이미 처리"}
+STATE_KO = {"active": "실행 중", "inactive": "멈춤", "failed": "실패", "missing": "설치 안 됨",
+            "activating": "시작 중", "unknown": "알 수 없음"}
+
+
+def summary(s):
+    age = time.time() - s["written"]
+    L = [f"HYEONGI {s['version']}  (상태 갱신 {age:.0f}초 전)"]
+    if s.get("live") and s.get("services", {}).get("hyeongid") != "active":
+        L.append("  ! hyeongid가 멈춰 있습니다. 아래 수치는 멈추기 전 마지막 값입니다 "
+                 "(서비스 상태만 지금 값). 켜기: sudo hyeongi start")
+    elif age > 60:
+        L.append("  ! 상태 파일이 오래됐습니다. hyeongid가 멈췄을 수 있습니다: systemctl status hyeongid")
+    mode = "차단 켜짐" if s["enforce"] else "기록만 함 (enforce: false)"
+    if s.get("demo"):
+        mode = "시연 모드, " + mode
+    L.append(f"  모드          : {mode}, 집행 방식 {s['backend']}")
+    if not s.get("flow_logging"):
+        L.append("  학습 데이터   : flow 기록 꺼짐 (nfstream 없음 또는 capture.enabled: false)")
+    else:
+        L.append(f"  학습 데이터   : {'일시정지' if s['paused'] else '수집 중'}, 누적 flow "
+                 + (f"{s['flows']:,}개" if s.get("flows") is not None else "(세는 중)"))
+    t = s.get("today", {})
+    auto, manual = t.get("blocked", 0), t.get("manual", 0)
+    L.append(f"  오늘          : 경보 {t.get('alerts', 0):,}건, 차단 {auto + manual}건 "
+             f"(자동 {auto}, 수동 {manual}), 차단 예정 {t.get('would_block', 0)}건")
+    if s.get("blocklist") is not None:
+        L.append(f"  차단 목록     : {len(s['blocklist'])}개 IP"
+                 + (f" {', '.join(s['blocklist'][:5])}" if s["blocklist"] else ""))
+    if s.get("xdp_dropped") is not None:
+        L.append(f"  XDP가 버린 패킷: {s['xdp_dropped']:,}개 (XDP를 붙인 뒤 누적)")
+    for name, st in s.get("services", {}).items():
+        L.append(f"  {name:<20}: {STATE_KO.get(st, st)}")
+    if s.get("report"):
+        L.append("  마지막 검토   : " + datetime.datetime.fromtimestamp(s["report"]["mtime"])
+                 .strftime("%m-%d %H:%M"))
+    if s.get("flagged"):
+        L.append("  최근 차단 대상:")
+        for f in s["flagged"][:5]:
+            when = datetime.datetime.fromtimestamp(f["last"]).strftime("%H:%M")
+            act = ACTION_KO.get(f["action"], f["action"])
+            if f["ip"] in (s.get("blocklist") or []):
+                act = "차단 중"                      # e.g. blocked by hand after a dry-run flag
+            L.append(f"    {when} {f['ip']:<16} {act}  {f.get('reason', '')}")
+    return "\n".join(L)
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    try:
+        s = read()
+    except FileNotFoundError:
+        print(f"{PATH} 없음: hyeongid가 아직 상태를 쓰지 않았습니다 (3.0 이상, 실행 중인지 확인).")
+        return 1
+    if "--json" not in argv:                  # --json stays the raw file
+        s = dict(s, services=live_services(s), live=True)
+    print(json.dumps(s, ensure_ascii=False, indent=1) if "--json" in argv else summary(s))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

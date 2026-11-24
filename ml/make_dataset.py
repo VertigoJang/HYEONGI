@@ -9,15 +9,15 @@ appear as 172.16.0.1 in victim-side captures).
 
   python3 -m ml.make_dataset --pcap attack.pcap --pcap benign.pcap \
       --attacker-ip 203.0.113.66 --out flows.csv
-  python  -m ml.make_dataset --flows "C:/ProgramData/CheckHook/flows/*.csv" --label 0 --out benign.csv
+  python  -m ml.make_dataset --flows "C:/ProgramData/HYEONGI/flows/*.csv" --label 0 --out benign.csv
 
 Networks: flow logs since 3.0.0rc34 carry a `net` column (the name given with
-`checkhook name-here`, else gw-xxxxxxxx, else unknown); older rows and PCAPs
+`hyeongi name-here`, else gw-xxxxxxxx, else unknown); older rows and PCAPs
 get "unknown" unless --set-net names them. The output keeps the column, so
 you can train on some networks and evaluate on others:
 
-  python3 -m ml.make_dataset --flows "/var/lib/checkhook/flows/*.csv" --label 0 --net home --out home.csv
-  python3 -m ml.make_dataset --flows "/var/lib/checkhook/flows/*.csv" --label 0 --exclude-net home --out other.csv
+  python3 -m ml.make_dataset --flows "/var/lib/hyeongi/flows/*.csv" --label 0 --net home --out home.csv
+  python3 -m ml.make_dataset --flows "/var/lib/hyeongi/flows/*.csv" --label 0 --exclude-net home --out other.csv
   python3 -m ml.make_dataset --pcap lab.pcap --attacker-ip 10.199.0.2 --set-net lab --out lab.csv
 
 Direction: flow logs since 3.0.0rc37 carry `dir` ("in" = another host started
@@ -26,12 +26,12 @@ file: this host's addresses are the ones present in most flows. The live
 detectors only act on inbound flows, so build benign training/evaluation data
 from those:
 
-  python3 -m ml.make_dataset --flows "/var/lib/checkhook/flows/*.csv" --label 0 --dir in --out benign-in.csv
+  python3 -m ml.make_dataset --flows "/var/lib/hyeongi/flows/*.csv" --label 0 --dir in --out benign-in.csv
 """
 import argparse, ipaddress
 import numpy as np
 import pandas as pd
-from checkhook.features import FEATURES
+from hyeongi.features import FEATURES
 
 def matcher(ips, nets):
     ipset = set(ips); nets = [ipaddress.ip_network(n) for n in nets]

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # install-capture.sh — register the boot-time benign-traffic capture service.
 #
-# Captures headers only (no payload) in 25 MB files in /var/lib/checkhook, for
+# Captures headers only (no payload) in 25 MB files in /var/lib/hyeongi, for
 # make_dataset to label later. Each start (boot) gets its own file names, so
 # earlier captures are kept; the oldest files are removed to stay near 4 GB
-# (CHECKHOOK_CAPTURE_GB=8 sudo -E bash ... for more).
+# (HYEONGI_CAPTURE_GB=8 sudo -E bash ... for more).
 #
 #   sudo bash packaging/install-capture.sh [iface]
 #   sudo bash packaging/install-capture.sh --uninstall
@@ -20,16 +20,16 @@ fi
 
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 . "$HERE/lib/common.sh"
-UNIT=/etc/systemd/system/checkhook-capture.service
-DATA=/var/lib/checkhook
+UNIT=/etc/systemd/system/hyeongi-capture.service
+DATA=/var/lib/hyeongi
 
 if [[ "${1:-}" == "--uninstall" ]]; then
-  systemctl disable --now checkhook-capture 2>/dev/null || true
+  systemctl disable --now hyeongi-capture 2>/dev/null || true
   rm -f "$UNIT"
   systemctl daemon-reload
   command -v semanage >/dev/null 2>&1 && semanage fcontext -d "$DATA(/.*)?" 2>/dev/null || true
   [[ -d "$DATA" ]] && command -v restorecon >/dev/null 2>&1 && restorecon -R "$DATA" || true
-  echo "checkhook-capture removed. Captured files are left in $DATA."
+  echo "hyeongi-capture removed. Captured files are left in $DATA."
   exit 0
 fi
 
@@ -51,7 +51,7 @@ ip link show "$IFACE" >/dev/null 2>&1 || { echo "interface '$IFACE' not found (s
 if id tcpdump >/dev/null 2>&1; then
   CAPUSER=tcpdump
 else
-  CAPUSER=checkhook-cap
+  CAPUSER=hyeongi-cap
   id "$CAPUSER" >/dev/null 2>&1 || useradd --system --no-create-home --shell "$(nologin_shell)" "$CAPUSER"
 fi
 
@@ -76,10 +76,10 @@ fi
 mkdir -p "$DATA"
 apparmor_allow_tcpdump "$DATA"
 
-MAXFILES=$(( ${CHECKHOOK_CAPTURE_GB:-4} * 40 ))     # 25 MB files; default 4 GB in total
+MAXFILES=$(( ${HYEONGI_CAPTURE_GB:-4} * 40 ))     # 25 MB files; default 4 GB in total
 sed -e "s|__TCPDUMP__|$TCPDUMP|g" -e "s|__IFACE__|$IFACE|g" -e "s|__CAPUSER__|$CAPUSER|g" \
     -e "s|__MAXFILES__|$MAXFILES|g" \
-    "$HERE/checkhook-capture.service" > "$UNIT"
+    "$HERE/hyeongi-capture.service" > "$UNIT"
 if [[ -n "$RESTORECON" ]]; then
   sed -i "s|__RESTORECON__|$RESTORECON|" "$UNIT"
 else
@@ -88,19 +88,19 @@ fi
 chmod 0644 "$UNIT"
 
 systemctl daemon-reload
-systemctl enable checkhook-capture >/dev/null 2>&1
-systemctl restart checkhook-capture
+systemctl enable hyeongi-capture >/dev/null 2>&1
+systemctl restart hyeongi-capture
 
 sleep 3
 echo
-if systemctl is-active --quiet checkhook-capture; then
-  echo "RUNNING: checkhook-capture"
+if systemctl is-active --quiet hyeongi-capture; then
+  echo "RUNNING: hyeongi-capture"
 else
-  echo "NOT running — see:  sudo journalctl -eu checkhook-capture --no-pager | tail"
+  echo "NOT running — see:  sudo journalctl -eu hyeongi-capture --no-pager | tail"
 fi
 echo "  interface : $IFACE   (headers only, snaplen 128B — no payload saved; runs as $CAPUSER)"
 echo "  files     : $DATA/benign-<start time>.pcapNN  (25 MB each, up to $((MAXFILES / 40)) GB, oldest removed)"
 echo
-echo "check it:   systemctl status checkhook-capture"
-echo "pause it:   sudo systemctl stop checkhook-capture     # before attack practice!"
-echo "resume:     sudo systemctl start checkhook-capture"
+echo "check it:   systemctl status hyeongi-capture"
+echo "pause it:   sudo systemctl stop hyeongi-capture     # before attack practice!"
+echo "resume:     sudo systemctl start hyeongi-capture"

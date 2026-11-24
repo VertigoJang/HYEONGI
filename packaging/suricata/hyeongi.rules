@@ -1,0 +1,13 @@
+# HYEONGI local rules for Suricata (same intent as packaging/snort/local.rules).
+# Loaded with `-s hyeongi.rules` in addition to Suricata's own rule files.
+# Windows: installed to C:\ProgramData\HYEONGI\suricata\hyeongi.rules
+
+# Inbound connection attempts to services a workstation should never expose.
+alert tcp any any -> any 23 (msg:"HYEONGI inbound telnet attempt"; flow:to_server; flags:S; sid:1100001; rev:2;)
+alert tcp any any -> any 445 (msg:"HYEONGI inbound SMB attempt"; flow:to_server; flags:S; sid:1100002; rev:2;)
+alert tcp any any -> any 3389 (msg:"HYEONGI inbound RDP attempt"; flow:to_server; flags:S; sid:1100003; rev:2;)
+alert tcp any any -> any 5900 (msg:"HYEONGI inbound VNC attempt"; flow:to_server; flags:S; sid:1100004; rev:2;)
+
+# Pipeline self-test: uncomment, restart Suricata, ping this machine from another
+# host and watch the agent log. Comment it out again afterwards.
+# alert icmp any any -> any any (msg:"HYEONGI TEST ICMP"; itype:8; sid:1199999; rev:1;)

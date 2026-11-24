@@ -1,6 +1,6 @@
 # ml — dataset preparation and training
 
-The ML detector uses nfstream statistical flow features (see `checkhook/features.py`,
+The ML detector uses nfstream statistical flow features (see `hyeongi/features.py`,
 57 features). Training and live inference use the **same** feature extraction,
 so there is no feature-space mismatch.
 
@@ -31,13 +31,13 @@ python3 -m ml.make_dataset --pcap monday.pcap --pcap wednesday.pcap \
 ```
 
 **Split by network.** Flow logs since 3.0.0rc34 carry a `net` column (the name
-given with `sudo checkhook name-here home`, else a salted `gw-xxxxxxxx`, else
+given with `sudo hyeongi name-here home`, else a salted `gw-xxxxxxxx`, else
 `unknown`). Keep or drop networks, and tag rows that have none (PCAPs, older
 logs) with `--set-net`:
 
 ```bash
-python3 -m ml.make_dataset --flows "/var/lib/checkhook/flows/*.csv" --label 0 --net home --out home.csv
-python3 -m ml.make_dataset --flows "/var/lib/checkhook/flows/*.csv" --label 0 --exclude-net home --out other.csv
+python3 -m ml.make_dataset --flows "/var/lib/hyeongi/flows/*.csv" --label 0 --net home --out home.csv
+python3 -m ml.make_dataset --flows "/var/lib/hyeongi/flows/*.csv" --label 0 --exclude-net home --out other.csv
 python3 -m ml.eval --model model.joblib --data other.csv --data attack.csv --by-net
 ```
 
@@ -49,8 +49,8 @@ Build benign data from those (`--dir in`), and split by time rather than by
 random flows (flows of one session are near-identical):
 
 ```bash
-python3 -m ml.make_dataset --flows "/var/lib/checkhook/flows/flows-202611[01]*.csv" --label 0 --dir in --out benign-train.csv
-python3 -m ml.make_dataset --flows "/var/lib/checkhook/flows/flows-2026112*.csv"   --label 0 --out benign-eval.csv
+python3 -m ml.make_dataset --flows "/var/lib/hyeongi/flows/flows-202611[01]*.csv" --label 0 --dir in --out benign-train.csv
+python3 -m ml.make_dataset --flows "/var/lib/hyeongi/flows/flows-2026112*.csv"   --label 0 --out benign-eval.csv
 python3 -m ml.eval --model model.joblib --data benign-eval.csv --by-dir
 ```
 
@@ -74,8 +74,8 @@ python3 -m ml.train --data benign.csv --data attack.csv --out model.joblib
 ## 3. Detect live (feeds the shared blocklist)
 
 ```bash
-sudo python3 -m checkhook.ml_detector -i eth0 --model model.joblib --dry-run
-sudo python3 -m checkhook.ml_detector -i eth0 --model model.joblib --backend nft --threshold 0.9
+sudo python3 -m hyeongi.ml_detector -i eth0 --model model.joblib --dry-run
+sudo python3 -m hyeongi.ml_detector -i eth0 --model model.joblib --backend nft --threshold 0.9
 ```
 
 Requirements: `pip install nfstream scikit-learn joblib` (nfstream needs

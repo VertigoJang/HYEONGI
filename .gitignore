@@ -13,7 +13,7 @@ flows.csv
 *.pcapng
 *.csv
 !docs/**/*.csv
-checkhook-data/
+hyeongi-data/
 *.pp
 *.te
 *.bak

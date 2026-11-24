@@ -1,0 +1,133 @@
+"""Load the HYEONGI YAML config (/etc/hyeongi/hyeongi.yaml by default).
+
+Missing keys fall back to the defaults below, so a minimal config works.
+"""
+import copy
+import os
+
+WINDOWS = os.name == "nt"
+PROGRAMDATA = os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"), "HYEONGI")
+
+DEFAULT_PATH = os.environ.get(
+    "HYEONGI_CONFIG",
+    os.path.join(PROGRAMDATA, "hyeongi.yaml") if WINDOWS else "/etc/hyeongi/hyeongi.yaml")
+
+DEFAULTS = {
+    "enforce": False,
+    "backend": "nft",
+    "block_timeout": "1h",
+    "block_private": False,
+    "skip": [],
+    # never block this host's current DNS servers, default gateway and own
+    # addresses (re-read every minute, so it follows the laptop between networks)
+    "protect_local": True,
+    # per-network enforcement. Empty trusted_gateways = off (enforce follows
+    # `enforce` everywhere). List your home gateway's MAC (hyeongi ctl trust-here)
+    # and every other network becomes observe-only: detect, never block.
+    "networks": {"trusted_gateways": [],
+                 # gateway MAC -> name for the `net` column of the flow logs
+                 # (set with: hyeongi name-here <name>); unnamed networks get
+                 # a salted "gw-xxxxxxxx" tag
+                 "names": {}},
+    # signature IDS: Snort 3 alert_json or Suricata eve.json (auto-detected).
+    # Older configs call this section "snort:"; that is still accepted.
+    # Alerts that never lead to a block (the triage still sees them):
+    #   ignore_gids  - Snort built-in inspectors that flag protocol anomalies on
+    #                  normal traffic: 116 packet decoder, 119 http_inspect,
+    #                  128 ssh, 129 stream_tcp, 137 ssl. Kept: 1/3 rules,
+    #                  112 arp_spoof, 122 port_scan.
+    #   ignore_rules - single rules as "gid:sid" (Suricata rules are gid 1).
+    #                  Defaults, all seen on ordinary use of the test laptop:
+    #                  1:399 1:402 1:408  ICMP host/port unreachable and echo
+    #                  1:451              reply, timestamp reply: replies to this
+    #                                     host's traffic (1:451 came from this
+    #                                     host's own server answering nmap's
+    #                                     timestamp probe during a scan of it)
+    #                  1:366 1:384 1:480 1:29456  informational "PING" rules:
+    #                                     being pinged is not an attack
+    #                  122:3 122:7 122:19 122:23  port_scan *sweeps* (one source,
+    #                                     many hosts): on a single host these are
+    #                                     ordinary connections to CDNs. Port
+    #                                     *scans* against this host (122:1, 122:5,
+    #                                     ...) still block.
+    "ids": {"enabled": True, "alert_file": "/var/log/hyeongi/snort/alert_json.txt",
+            "ignore_gids": [116, 119, 128, 129, 137], "ignore_rules": ["1:396", "1:399", "1:402", "1:408", "1:449", "1:451", "1:366", "1:384", "1:480", "1:29456",
+                             "122:3", "122:7", "122:19", "122:23"],
+            # Snort renames a full alert file (100 MB) to <name>.<time>; keep this many
+            "keep_rotated": 3,
+            # payload signatures matching on these ports matched ciphertext: ignored there
+            "payload_block": False,
+            # never block on their own (shown and reviewed): UDP port scans
+            "review_rules": ["122:17", "122:18", "122:20", "122:21", "122:22", "122:24", "1:1201",
+                             # DNS spoof (TTL 1 min): the source of a spoofed answer is the
+                             # resolver it imitates, so blocking it cuts off DNS, not the attacker
+                             "1:254"],
+            "encrypted_ports": [443, 465, 563, 636, 853, 989, 990, 992, 993, 994, 995, 5061, 8443],
+            "payload_rule_prefixes": ["INDICATOR-SHELLCODE", "SHELLCODE"]},
+    "ml": {"enabled": True, "iface": "eth0",
+           "model": "/var/lib/hyeongi/model.joblib",
+           "threshold": 0.9, "idle": 15, "active": 120,
+           # ML detections in the same JSON-lines format as Snort alerts (gid 9000),
+           # read by the LLM triage together with ids.alert_file
+           "alert_file": "/var/log/hyeongi/ml_alerts.json"},
+    "xdp": {"iface": "eth0", "mode": "generic"},
+    "triage": {"enabled": True, "alert_file": "/var/log/snort/alert_json.txt",
+               "last": 500,
+               "summary_minutes": 60, "settle": 20,
+               "host": "http://127.0.0.1:11434", "lang": "English",
+               # one review may queue behind another Ollama client, then cold-load
+               "timeout": 300, "num_ctx": 4096, "keep_alive": "5m", "retries": 1,
+               # if the main model fails or runs mostly on the CPU, fall back to this lighter one
+               "model": "qwen2.5:7b", "fallback_model": "qwen2.5:3b",
+               "out": "/var/lib/hyeongi/triage/report.txt"},
+    # flow logging for ML training data: every finished flow's features go to
+    # CSV (a few hundred bytes per flow, versus megabytes of raw packets).
+    # enabled: true / false / auto (= on when nfstream is installed).
+    # rows_per_file x keep bounds the disk use (~20 MB per 50000 rows).
+    "capture": {"enabled": "auto", "dir": "/var/lib/hyeongi/flows",
+                "rows_per_file": 50000, "keep": 100},
+    "daemon": {"expiry_interval": 60, "triage_interval": 3600},
+}
+
+if WINDOWS:   # same structure, Windows locations and enforcement
+    DEFAULTS["backend"] = "winfw"
+    DEFAULTS["ids"]["alert_file"] = os.path.join(PROGRAMDATA, "suricata", "eve.json")
+    DEFAULTS["ml"]["iface"] = "auto"
+    DEFAULTS["ml"]["model"] = os.path.join(PROGRAMDATA, "model.joblib")
+    DEFAULTS["ml"]["alert_file"] = os.path.join(PROGRAMDATA, "logs", "ml_alerts.json")
+    DEFAULTS["triage"]["alert_file"] = DEFAULTS["ids"]["alert_file"]
+    DEFAULTS["triage"]["out"] = os.path.join(PROGRAMDATA, "triage", "report.txt")
+    DEFAULTS["capture"].update({"enabled": True, "dir": os.path.join(PROGRAMDATA, "flows")})
+
+
+def _merge(base, over):
+    out = copy.deepcopy(base)
+    for k, v in (over or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def load(path=None):
+    path = path or DEFAULT_PATH
+    try:
+        import yaml
+    except ImportError:
+        raise SystemExit("PyYAML is missing: install python3-pyyaml (RHEL/Fedora), python3-yaml "
+                         "(Debian/Ubuntu), python-yaml (Arch), python3-PyYAML (openSUSE), "
+                         "or: pip install pyyaml")
+    if not os.path.exists(path):
+        hint = ("packaging\\windows\\install.ps1" if WINDOWS
+                else "sudo bash packaging/install-services.sh")
+        raise SystemExit(f"config not found: {path} (install: {hint})")
+    with open(path, encoding="utf-8-sig") as f:   # BOM: PowerShell 5.1 writes one
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise SystemExit(f"config {path}: top level must be a mapping")
+    if "snort" in data:                       # backward compatibility (<= 1.0)
+        legacy = data.pop("snort")
+        data.setdefault("ids", legacy)
+    from hyeongi.tune import resolve_auto       # `auto` values -> fitted to this machine
+    return resolve_auto(_merge(DEFAULTS, data))

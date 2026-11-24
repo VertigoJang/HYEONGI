@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""Run a HYEONGI component from the YAML config (used by the systemd units).
+
+  python3 -m hyeongi.service ids    [--config PATH]   (alias: snort)
+  python3 -m hyeongi.service ml     [--config PATH]
+  python3 -m hyeongi.service triage [--config PATH]
+  python3 -m hyeongi.service show   [--config PATH]   # print the effective config
+
+It translates the config into the component's normal command-line arguments,
+so every component still behaves exactly as when run by hand.
+
+Exit status 2 = misconfiguration (missing model, component disabled...). The
+units treat it as final and do not restart-loop on it.
+"""
+import argparse
+import os
+import sys
+
+from hyeongi import config
+
+EXIT_CONFIG = 2
+
+
+def common_enforce_args(c):
+    args = ["--timeout", str(c["block_timeout"])]
+    if c["enforce"]:
+        args += ["--backend", c["backend"]]
+    else:
+        args += ["--backend", "none", "--dry-run"]
+    if c["block_private"]:
+        args.append("--block-private")
+    return args
+
+
+def run(module_main, argv):
+    sys.argv = [sys.argv[0]] + argv
+    print("[hyeongi] args:", " ".join(argv), flush=True)
+    rc = module_main()
+    if isinstance(rc, int) and rc:
+        sys.exit(rc)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("component", choices=["ids", "snort", "ml", "triage", "show"])
+    ap.add_argument("--config", default=None)
+    a = ap.parse_args()
+    if a.component == "snort":                # old name, same component
+        a.component = "ids"
+    c = config.load(a.config)
+
+    if a.component == "show":
+        import yaml
+        print(yaml.safe_dump(c, sort_keys=False, allow_unicode=True), end="")
+        return
+
+    sect = c[a.component]
+    if not sect.get("enabled", True):
+        print(f"[hyeongi] '{a.component}' is disabled in the config", flush=True)
+        sys.exit(EXIT_CONFIG)
+
+    mode = "ENFORCING" if c["enforce"] else "dry-run (enforce: false)"
+    if a.component in ("ids", "ml"):
+        print(f"[hyeongi] {a.component}: {mode}", flush=True)
+
+    if a.component == "ids":
+        from hyeongi.snort_bridge import main as m
+        argv = ["--alert-file", sect["alert_file"]] + common_enforce_args(c)
+        if c["skip"]:
+            argv += ["--skip"] + [str(x) for x in c["skip"]]
+        run(m, argv)
+
+    elif a.component == "ml":
+        if not os.path.exists(sect["model"]):
+            print(f"[hyeongi] model not found: {sect['model']} — train one first:\n"
+                  f"  ./hyeongi train --data ... --out {sect['model']}", flush=True)
+            sys.exit(EXIT_CONFIG)
+        from hyeongi.ml_detector import main as m
+        argv = ["-i", sect["iface"], "--model", sect["model"],
+                "--threshold", str(sect["threshold"]),
+                "--idle", str(sect["idle"]), "--active", str(sect["active"])]
+        argv += common_enforce_args(c)
+        run(m, argv)
+
+    elif a.component == "triage":
+        out = sect.get("out")
+        if out:
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+        from hyeongi.triage import main as m
+        argv = ["--alert-file", sect["alert_file"], "--last", str(sect["last"]),
+                "--summary-minutes", str(sect.get("summary_minutes", 60)),
+                "--settle", str(sect.get("settle", 20)),
+                "--model", sect["model"], "--host", sect["host"],
+                "--timeout", str(sect.get("timeout", 300)), "--num-ctx", str(sect.get("num_ctx", 4096)),
+                "--keep-alive", str(sect.get("keep_alive", "5m")), "--retries", str(sect.get("retries", 1)),
+                "--fallback-model", str(sect.get("fallback_model", "")),
+                "--lang", sect["lang"], "--backend", c["backend"]]
+        ml_alerts = c["ml"].get("alert_file")
+        if ml_alerts and os.path.exists(ml_alerts):
+            argv += ["--alert-file", ml_alerts]
+        skip = [str(x) for x in (c.get("skip") or [])]
+        if skip:
+            argv += ["--skip", ",".join(skip)]
+        if c.get("block_private"):
+            argv.append("--block-private")
+        if c.get("enforce"):
+            argv.append("--enforce")
+        gids = c["ids"].get("ignore_gids") or []
+        if gids:
+            argv += ["--ignore-gids", ",".join(str(g) for g in gids)]
+        rules = c["ids"].get("ignore_rules") or []
+        if rules:
+            argv += ["--ignore-rules", ",".join(str(r) for r in rules)]
+        if "encrypted_ports" in c["ids"]:
+            argv += ["--encrypted-ports", ",".join(str(p) for p in c["ids"]["encrypted_ports"] or [])]
+        if "payload_rule_prefixes" in c["ids"]:
+            argv += ["--payload-prefixes", ",".join(c["ids"]["payload_rule_prefixes"] or [])]
+        if "review_rules" in c["ids"]:
+            argv += ["--review-rules", ",".join(str(r) for r in c["ids"]["review_rules"] or [])]
+        if c["ids"].get("payload_block"):
+            argv += ["--payload-block"]
+        if out:
+            argv += ["--out", out]
+        run(m, argv)
+
+
+if __name__ == "__main__":
+    main()

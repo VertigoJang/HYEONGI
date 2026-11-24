@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# install-services.sh — install checkhookd (the CheckHook daemon) and the config.
+# install-services.sh — install hyeongid (the HYEONGI daemon) and the config.
 #
 #   sudo bash packaging/install-services.sh [--iface IFACE] [--alert-file PATH]
 #   sudo bash packaging/install-services.sh --uninstall
 #
 # Installs:
-#   /etc/checkhook/checkhook.yaml   (only if absent — never overwrites yours)
-#   checkhookd.service              IDS bridge + ML detector + block expiry +
+#   /etc/hyeongi/hyeongi.yaml   (only if absent — never overwrites yours)
+#   hyeongid.service              IDS bridge + ML detector + block expiry +
 #                                   hourly read-only LLM triage, one process
-#   /usr/local/bin/checkhook        launcher  -> <repo>/bin/checkhook
-#   /usr/local/bin/checkhookd       daemon    -> <repo>/bin/checkhookd
+#   /usr/local/bin/hyeongi        launcher  -> <repo>/bin/hyeongi
+#   /usr/local/bin/hyeongid       daemon    -> <repo>/bin/hyeongid
 #
 # The packet capture (install-capture.sh), the Snort sensor (install-snort.sh)
 # and the XDP loader (install-xdp.sh) are separate units.
 #
-# Safety: the config ships with `enforce: false`, so checkhookd starts in
+# Safety: the config ships with `enforce: false`, so hyeongid starts in
 # dry-run and blocks nothing until you change it.
 
 set -euo pipefail
@@ -23,20 +23,20 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 . "$HERE/lib/common.sh"
 ROOT="$(cd "$HERE/.." && pwd)"
-CONF_DIR=/etc/checkhook
-CONF="$CONF_DIR/checkhook.yaml"
-UNIT=/etc/systemd/system/checkhookd.service
+CONF_DIR=/etc/hyeongi
+CONF="$CONF_DIR/hyeongi.yaml"
+UNIT=/etc/systemd/system/hyeongid.service
 BIN=/usr/local/bin
 
 if [[ "${1:-}" == "--uninstall" ]]; then
-  systemctl disable --now checkhookd 2>/dev/null || true
+  systemctl disable --now hyeongid 2>/dev/null || true
   rm -f "$UNIT"
   systemctl daemon-reload
-  for l in checkhook checkhookd; do
+  for l in hyeongi hyeongid; do
     [[ -L "$BIN/$l" ]] && rm -f "$BIN/$l"
   done
-  echo "checkhookd removed. Config kept at $CONF; the nft table is left as is"
-  echo "(remove it with: sudo $ROOT/bin/checkhook teardown)."
+  echo "hyeongid removed. Config kept at $CONF; the nft table is left as is"
+  echo "(remove it with: sudo $ROOT/bin/hyeongi teardown)."
   exit 0
 fi
 
@@ -61,7 +61,7 @@ mkdir -p "$CONF_DIR"
 if [[ -f "$CONF" ]]; then
   echo "[=] keeping existing $CONF"
 else
-  cp "$HERE/checkhook.example.yaml" "$CONF"
+  cp "$HERE/hyeongi.example.yaml" "$CONF"
   [[ -n "$IFACE" ]] && sed -i "s|^  iface: .*|  iface: $IFACE|" "$CONF"   # ml.iface and xdp.iface
   [[ -n "$ALERT" ]] && sed -i "s|^  alert_file: .*|  alert_file: $ALERT|" "$CONF"
   chmod 0644 "$CONF"
@@ -69,30 +69,30 @@ else
 fi
 
 # --- commands on PATH ------------------------------------------------------------
-chmod +x "$ROOT/bin/checkhook" "$ROOT/bin/checkhookd"
-for l in checkhook checkhookd; do
+chmod +x "$ROOT/bin/hyeongi" "$ROOT/bin/hyeongid"
+for l in hyeongi hyeongid; do
   ln -sfn "$ROOT/bin/$l" "$BIN/$l"
 done
-echo "[+] $BIN/checkhook, $BIN/checkhookd -> $ROOT/bin/"
+echo "[+] $BIN/hyeongi, $BIN/hyeongid -> $ROOT/bin/"
 
 # --- daemon ------------------------------------------------------------------------
-sed "s|__ROOT__|$ROOT|g" "$HERE/checkhookd.service" > "$UNIT"
+sed "s|__ROOT__|$ROOT|g" "$HERE/hyeongid.service" > "$UNIT"
 chmod 0644 "$UNIT"
 systemctl daemon-reload
-systemctl enable checkhookd >/dev/null 2>&1
-systemctl restart checkhookd
+systemctl enable hyeongid >/dev/null 2>&1
+systemctl restart hyeongid
 
-MODEL="$(cd "$ROOT" && python3 -c "from checkhook import config; print(config.load('$CONF')['ml']['model'])")"
+MODEL="$(cd "$ROOT" && python3 -c "from hyeongi import config; print(config.load('$CONF')['ml']['model'])")"
 sleep 2
 echo
-echo "checkhookd : $(systemctl is-active checkhookd 2>/dev/null || true)"
+echo "hyeongid : $(systemctl is-active hyeongid 2>/dev/null || true)"
 if [[ -f "$MODEL" ]]; then
   echo "ML model   : $MODEL (ML detection on)"
 else
   echo "ML model   : none at $MODEL yet — ML detection is off until you train one"
-  echo "             (then: sudo systemctl restart checkhookd)"
+  echo "             (then: sudo systemctl restart hyeongid)"
 fi
 echo
-echo "config  : $CONF   (enforce: false = dry-run; edit, then: sudo systemctl restart checkhookd)"
-echo "logs    : checkhook logs        (journalctl -fu checkhookd)"
-echo "report  : sudo checkhook report"
+echo "config  : $CONF   (enforce: false = dry-run; edit, then: sudo systemctl restart hyeongid)"
+echo "logs    : hyeongi logs        (journalctl -fu hyeongid)"
+echo "report  : sudo hyeongi report"

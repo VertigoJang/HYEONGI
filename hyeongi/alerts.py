@@ -1,0 +1,270 @@
+"""IDS alert parsing shared by the bridge and the triage.
+
+Understands, line by line (auto-detected):
+  * Snort 3 alert_json:   {"src_addr": "...", "sid": 1000001, "msg": "...", ...}
+  * Suricata eve.json:    {"event_type": "alert", "src_ip": "...",
+                           "alert": {"signature_id": 2001219, "signature": "..."}, ...}
+Other eve.json events (flow, dns, http, stats ...) are ignored.
+"""
+import datetime as _dt
+import glob
+import json
+import os
+import re
+
+from hyeongi.policy import norm_ip
+
+
+def parse_alert(line):
+    """Return {"src", "gid", "sid", "msg", "ids", ...} for an alert line, else None.
+
+    Snort/ML lines also carry "dport" (destination port, or None) and "score"
+    (the ML attack probability; None for IDS alerts).
+
+    gid: Snort generator id (1 = text rules, 3 = shared-object rules, others
+    are built-in inspectors such as the packet decoder or port_scan). Suricata
+    rules use gid 1."""
+    line = line.strip()
+    if not line or line[0] != "{":
+        return None
+    try:
+        ev = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(ev, dict):
+        return None
+    if "event_type" in ev:                       # Suricata eve.json
+        if ev.get("event_type") != "alert":
+            return None
+        al = ev.get("alert") or {}
+        return {"src": norm_ip(ev.get("src_ip")), "gid": _int(al.get("gid"), 1),
+                "sid": al.get("signature_id"), "msg": al.get("signature", ""),
+                "ids": "suricata", "dport": _int(ev.get("dest_port"), None),
+                "sport": _int(ev.get("src_port"), None),
+                "score": None, "ts": ev.get("timestamp")}
+    if "src_addr" in ev or "sid" in ev:          # Snort 3 alert_json
+        gid = _int(ev.get("gid"), 1)
+        dport = ev.get("dst_port")
+        if dport is None and isinstance(ev.get("dst_ap"), str) and ":" in ev["dst_ap"]:
+            dport = ev["dst_ap"].rsplit(":", 1)[1]          # Snort's "addr:port" field
+        sport = ev.get("src_port")
+        if sport is None and isinstance(ev.get("src_ap"), str) and ":" in ev["src_ap"]:
+            sport = ev["src_ap"].rsplit(":", 1)[1]
+        return {"src": norm_ip(ev.get("src_addr")), "gid": gid, "sid": ev.get("sid"),
+                "msg": ev.get("msg", ""), "ids": "ml" if gid == 9000 else "snort",
+                "dport": _int(dport, None), "sport": _int(sport, None),
+                "score": ev.get("score"),
+                "ts": ev.get("timestamp")}
+    return None
+
+
+# Ports whose payload is encrypted (TLS and friends). A content signature that
+# matches there matched ciphertext by chance: e.g. INDICATOR-SHELLCODE
+# "x86 setuid 0" on downloads from CDNs over 443.
+ENCRYPTED_PORTS = (443, 465, 563, 636, 853, 989, 990, 992, 993, 994, 995, 5061, 8443)
+PAYLOAD_PREFIXES = ("INDICATOR-SHELLCODE", "SHELLCODE")
+# Snort port_scan UDP variants (portscan, decoy, distributed; plain and filtered).
+# On a client they come from its own UDP: P2P peers answering with ICMP port
+# unreachable, QUIC servers. Shown and reviewed, never a block on their own.
+REVIEW_RULES = ("122:17", "122:18", "122:20", "122:21", "122:22", "122:24",
+                "1:1201")   # HTTP 403 Forbidden sent back by a server this host asked
+
+
+class Ignore:
+    """Which alerts never lead to a block: whole generators (Snort gid, e.g. the
+    packet decoder), single rules written "gid:sid" (Suricata rules are gid 1),
+    and payload signatures (msg starting with one of `payload_prefixes`) when
+    either port is an encrypted-traffic port.
+
+    On other ports a payload signature is real evidence but weak: plain-HTTP
+    downloads (apt, container images) match "setuid 0" or "inc ebx NOOP" by
+    chance. Unless `payload_block` is set, such an alert is review-only
+    (`review_only()`): it never blocks by itself, the triage still sees it."""
+
+    def __init__(self, gids=(), rules=(), encrypted_ports=ENCRYPTED_PORTS,
+                 payload_prefixes=PAYLOAD_PREFIXES, payload_block=False,
+                 review_rules=REVIEW_RULES):
+        self.payload_block = bool(payload_block)
+        self.review = set()
+        for r in review_rules or ():
+            g, _, x = str(r).partition(":")
+            self.review.add((int(g), int(x)) if x else (1, int(g)))
+        self.gids = {int(g) for g in gids}
+        self.rules = set()
+        for r in rules:
+            g, _, s = str(r).partition(":")
+            self.rules.add((int(g), int(s)) if s else (1, int(g)))
+        self.enc = {int(p) for p in (encrypted_ports or ())}
+        self.prefixes = tuple(str(x) for x in (payload_prefixes or ()))
+
+    def payload_on_encrypted(self, al):
+        if not self.prefixes or not self.enc:
+            return False
+        if not str(al.get("msg", "")).startswith(self.prefixes):
+            return False
+        return al.get("sport") in self.enc or al.get("dport") in self.enc
+
+    def is_payload(self, al):
+        return bool(self.prefixes) and str(al.get("msg", "")).startswith(self.prefixes)
+
+    def review_only(self, al):
+        """Evidence for review, not a block: a payload signature on a plain port,
+        or a rule in `review_rules` (UDP port scans by default)."""
+        if self(al):
+            return False
+        if (al.get("gid", 1), _int(al.get("sid"), -1)) in self.review:
+            return True
+        return not self.payload_block and self.is_payload(al)
+
+    def __call__(self, al):
+        gid = al.get("gid", 1)
+        return (gid in self.gids or (gid, _int(al.get("sid"), -1)) in self.rules
+                or self.payload_on_encrypted(al))
+
+    def __bool__(self):
+        return bool(self.gids or self.rules or self.prefixes or self.review)
+
+    def __str__(self):
+        parts = [f"gid {g}" for g in sorted(self.gids)]
+        parts += [f"{g}:{s}" for g, s in sorted(self.rules)]
+        if self.enc and self.prefixes:
+            parts.append(f"{'/'.join(self.prefixes)} on ports {','.join(map(str, sorted(self.enc)))}")
+        if self.prefixes and not self.payload_block:
+            parts.append(f"{'/'.join(self.prefixes)} elsewhere: review only")
+        if self.review:
+            parts.append("review only: " + ", ".join(f"{g}:{x}" for g, x in sorted(self.review)))
+        return ", ".join(parts)
+
+
+def _int(v, default):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def iter_back(path, max_bytes=64 * 1024 * 1024, block=1024 * 1024, state=None):
+    """Parsed alerts of `path`, newest first, reading backwards in blocks.
+
+    Stops after `max_bytes`, so a multi-GB eve.json full of flow and dns
+    events is never read whole; then state["truncated"] is set to True if a
+    dict is given."""
+    try:
+        f = open(path, "rb")
+    except FileNotFoundError:
+        return
+    with f:
+        end = f.seek(0, os.SEEK_END)
+        pos, scanned, rest = end, 0, b""
+        while pos > 0 and scanned < max_bytes:
+            step = min(block, pos)
+            pos -= step
+            f.seek(pos)
+            chunk = f.read(step) + rest
+            lines = chunk.split(b"\n")
+            rest = lines.pop(0) if pos > 0 else b""   # first piece may be partial
+            for raw in reversed(lines):
+                al = parse_alert(raw.decode("utf-8", "replace"))
+                if al:
+                    yield al
+            scanned += step
+        if pos > 0 and state is not None:
+            state["truncated"] = True
+            return
+        if rest:
+            al = parse_alert(rest.decode("utf-8", "replace"))
+            if al:
+                yield al
+
+
+def rotated(path):
+    """Older generations of an alert file, newest first.
+
+    Snort's alert_json renames the full file to "<name>.<unix time>" when it
+    reaches its size limit; the ML writer and Suricata setups use "<name>.1"."""
+    out = []
+    for p in glob.glob(glob.escape(path) + ".*"):
+        if re.fullmatch(r"\d+", p[len(path) + 1:]):
+            try:
+                out.append((os.path.getmtime(p), p))
+            except OSError:
+                pass
+    return [p for _, p in sorted(out, reverse=True)]
+
+
+def prune_rotated(path, keep):
+    """Delete all but the `keep` newest rotated generations of `path`.
+    Returns the deleted paths. Without this, a flood fills the disk 100 MB at a time."""
+    gone = []
+    for p in rotated(path)[max(0, int(keep)):]:
+        try:
+            os.remove(p)
+            gone.append(p)
+        except OSError:
+            pass
+    return gone
+
+
+def tail_alerts(path, last, want=None, skipped=None, since=None, follow_rotated=False, **kw):
+    """The newest `last` alerts in `path`, oldest first.
+
+    want: optional predicate; alerts it rejects are not collected (and do not
+    use up the `last` slots), only counted in skipped["n"] if a dict is given.
+    This keeps a flood of ignored decoder alerts from pushing real evidence
+    out of the window.
+    since: optional datetime; reading stops at the first older alert.
+    follow_rotated: continue into the rotated generations of the file."""
+    found = []
+    for p in [path] + (rotated(path) if follow_rotated else []):
+        done = False
+        for al in iter_back(p, **kw):
+            if since is not None:
+                t = alert_time(al.get("ts"))
+                if t is not None and t < since:
+                    done = True
+                    break
+            if want is not None and not want(al):
+                if skipped is not None:
+                    skipped["n"] = skipped.get("n", 0) + 1
+                continue
+            found.append(al)
+            if len(found) >= last:
+                done = True
+                break
+        if done:
+            break
+    found.reverse()
+    return found
+
+
+_SNORT_TS = re.compile(r"^(\d\d)/(\d\d)-(\d\d):(\d\d):(\d\d)")
+
+
+def alert_time(ts, now=None):
+    """Local naive datetime of an alert timestamp, or None.
+
+    Snort 3 writes "11/14-13:38:40.200636" (no year: the year that keeps the
+    time from lying in the future is used); ML lines and Suricata use ISO 8601."""
+    if not ts:
+        return None
+    now = now or _dt.datetime.now()
+    m = _SNORT_TS.match(str(ts))
+    if m:
+        mo, d, h, mi, se = map(int, m.groups())
+        try:
+            t = _dt.datetime(now.year, mo, d, h, mi, se)
+        except ValueError:
+            return None
+        if t > now + _dt.timedelta(days=1):          # e.g. a Dec 31 alert read on Jan 1
+            t = t.replace(year=now.year - 1)
+        return t
+    try:
+        t = _dt.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        try:                                         # Suricata "+0900" offsets
+            t = _dt.datetime.strptime(str(ts)[:19], "%Y-%m-%dT%H:%M:%S")
+        except ValueError:
+            return None
+    if t.tzinfo is not None:
+        t = t.astimezone().replace(tzinfo=None)
+    return t

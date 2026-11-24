@@ -23,7 +23,7 @@ import argparse
 import numpy as np
 import pandas as pd
 import joblib
-from checkhook.features import FEATURES
+from hyeongi.features import FEATURES
 
 PROTO = {1: "ICMP", 6: "TCP", 17: "UDP", 58: "ICMPv6"}
 SIZE = [("bidirectional_packets", "packets"), ("bidirectional_bytes", "bytes"),

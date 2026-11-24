@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Shared helpers for CheckHook's Linux installers: distro detection, package-name
+# Shared helpers for HYEONGI's Linux installers: distro detection, package-name
 # hints, AppArmor/SELinux handling. Sourced, not executed.
 
 # --- distro family -------------------------------------------------------------
@@ -96,7 +96,7 @@ apparmor_allow_tcpdump() {   # apparmor_allow_tcpdump <dir>
     mkdir -p /etc/apparmor.d/local
     touch "$local_file"
     if ! grep -qF "$dir/** rwk," "$local_file"; then
-      printf '# added by CheckHook install-capture.sh\n%s/ r,\n%s/** rwk,\n' "$dir" "$dir" >> "$local_file"
+      printf '# added by HYEONGI install-capture.sh\n%s/ r,\n%s/** rwk,\n' "$dir" "$dir" >> "$local_file"
     fi
     apparmor_parser -r "$prof" && echo "[+] AppArmor: tcpdump may write to $dir ($local_file)"
   done

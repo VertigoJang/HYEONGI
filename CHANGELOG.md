@@ -2,17 +2,31 @@
 
 ## 3.0.0 (in testing)
 
-**Check: the LLM review now does what the name says**
-- rc41: the app and `checkhook stats` show whether the services run now, not what the
+**Name**
+- rc42: the project is called HYEONGI: Host-based, Your-network-gated Enforcement with
+  On-device Network Guard & Inspection.
+  - Every name follows it: the launcher `hyeongi`, the daemon `hyeongid`, the Python
+    package, the units `hyeongi-ids`, `hyeongi-xdp` and `hyeongi-capture`, the nftables
+    tables `ip hyeongi` and `ip6 hyeongi`, the XDP pin directory and its maps, the paths
+    `/etc/hyeongi`, `/var/lib/hyeongi`, `/var/log/hyeongi` and `/usr/local/lib/hyeongi`,
+    the `HYEONGI_*` environment variables, the Windows folder, tasks and firewall group,
+    and the lab names of `lab-netns.sh` (`hy-host`, `hy-atk`, `hyatk`, `hylab`).
+  - An install made under the earlier name is not migrated: uninstall it with that
+    version's scripts and install again. Keep `net-salt` next to the flow logs when
+    moving data, or every `gw-` network tag changes.
+  - New logo (the shield with an H) and banner. Nothing else changes in behaviour.
+
+**Inspection: the LLM review now does what the name says**
+- rc41: the app and `hyeongi stats` show whether the services run now, not what the
   last status file said.
-  - Found on the test laptop: after "전체 중단" (or `checkhook stop`) the app kept showing
+  - Found on the test laptop: after "전체 중단" (or `hyeongi stop`) the app kept showing
     every service as running, and the power button stayed "전체 중단", so the app could
-    stop CheckHook but not start it again. checkhookd writes status.json itself; once it
+    stop HYEONGI but not start it again. hyeongid writes status.json itself; once it
     stops, the file keeps its last "active" states.
-  - Linux: the app and `checkhook stats` ask systemd directly (`systemctl is-active`, no
+  - Linux: the app and `hyeongi stats` ask systemd directly (`systemctl is-active`, no
     root needed). Windows: the file is used while it is fresh; once it is older than a
     minute the states are shown as unknown instead of repeated.
-  - While checkhookd is stopped the app says so ("전체 중단됨") and marks the numbers as
+  - While hyeongid is stopped the app says so ("전체 중단됨") and marks the numbers as
     the last values from before the stop.
 - rc40: practice mode survives reboots, and DNS-spoof alerts no longer block on their own.
   - Found during the first real use: the laptop rebooted twice during a 6-hour exercise
@@ -20,9 +34,9 @@
     and XDP ran for 2.5 hours although practice mode meant "everything off". Training
     data stayed clean only because the pause flag is a file.
   - `practice start` now also turns start-at-boot off for the units that had it (and
-    remembers which); `practice end` turns it back on, restarts checkhook-xdp (oneshot:
-    attach again) and checks that start-at-boot was restored. checkhookd started by
-    hand during practice mode waits until it ends; `checkhook start` refuses.
+    remembers which); `practice end` turns it back on, restarts hyeongi-xdp (oneshot:
+    attach again) and checks that start-at-boot was restored. hyeongid started by
+    hand during practice mode waits until it ends; `hyeongi start` refuses.
   - `1:254` (PROTOCOL-DNS SPOOF, TTL of 1 min) joins the default `ids.review_rules`:
     logged and reviewed, never a block on its own. The source of a spoofed DNS answer
     is the resolver it imitates, so blocking it cuts off DNS rather than the attacker;
@@ -32,21 +46,21 @@
     logged before the network was named); the logs are not changed.
 - rc39: practice mode, for attack practice from this host (the procedure first done by hand
   for a Metasploitable2 web-attack exercise).
-  - `sudo checkhook practice start [--target IP ...] [memo]`: remembers whether
-    checkhook-capture was running, pauses collection (window in pauses.log), stops
-    checkhookd, checkhook-ids, checkhook-xdp (program detached) and checkhook-capture,
+  - `sudo hyeongi practice start [--target IP ...] [memo]`: remembers whether
+    hyeongi-capture was running, pauses collection (window in pauses.log), stops
+    hyeongid, hyeongi-ids, hyeongi-xdp (program detached) and hyeongi-capture,
     checks that they and the XDP pins are gone, and records the time and the newest
     flow log.
-  - `sudo checkhook practice end`: starts the services again, resumes collection,
-    leaves checkhook-capture as it was, and checks: services up, XDP attached
+  - `sudo hyeongi practice end`: starts the services again, resumes collection,
+    leaves hyeongi-capture as it was, and checks: services up, XDP attached
     (backend xdp), the newest flow log from before unchanged, no flow log written
     during the practice, no flow row with a target address. Result in practice.log;
     exit code 1 when a check fails.
-  - `sudo checkhook practice scrub IP` removes rows with that address from the flow
-    logs (not the one checkhookd is writing).
+  - `sudo hyeongi practice scrub IP` removes rows with that address from the flow
+    logs (not the one hyeongid is writing).
   - The app has a "실습 모드 시작 / 종료" button next to "전체 중단": it asks for a memo
     and optional target IPs, shows the check results at the end, and while practice
-    mode is on it says so (instead of "checkhookd may have stopped") and disables the
+    mode is on it says so (instead of "hyeongid may have stopped") and disables the
     power button. The practice state is read from its own file, so the app shows it
     even when the status file is stale or missing.
 - rc38: the last two would-block entries in the test laptop's whole history are explained
@@ -86,9 +100,9 @@
     newer for evaluation); a random split of flows put 42.5 % of evaluation rows
     verbatim into training on the test laptop.
 - rc36: fit to the machine, and see where false positives come from.
-  - `checkhook tune` shows RAM, CPU threads, the GPU share of the last review and the
+  - `hyeongi tune` shows RAM, CPU threads, the GPU share of the last review and the
     free disk, and the LLM model / fallback / num_ctx / timeout and flow-log size that
-    fit them; `sudo checkhook tune --apply` writes them (comments kept) and restarts.
+    fit them; `sudo hyeongi tune --apply` writes them (comments kept) and restarts.
     Tiers by RAM (Ollama on an integrated GPU shares system memory): >= 14 GB
     qwen2.5:7b + 3b, >= 7 GB qwen2.5:3b + 1.5b, below that qwen2.5:1.5b with num_ctx
     2048; one tier lower and a 600 s timeout when the last review ran mostly on the
@@ -103,7 +117,7 @@
     and unlike other benign flows (the "small flow = attack" bias seen in the v3
     experiments).
   - `ml.make_dataset` keeps `dst_port` and `protocol` for that report.
-- rc35: two problems found by attacking CheckHook from the netns lab (IPv4 and IPv6).
+- rc35: two problems found by attacking HYEONGI from the netns lab (IPv4 and IPv6).
   - Fixed (from rc33): an IPv6 attacker on the same /64 as this host was never flagged.
     rc33 counted every address in this host's on-link IPv6 networks as local, to cover
     temporary addresses; in the lab (fd99:199::/64 on both ends) Snort raised 6 alerts
@@ -112,7 +126,7 @@
     re-read of this host's addresses (at most every 2 s): a new temporary address of
     this host is still local, a neighbour is not. Neighbours are treated like RFC1918
     neighbours: not blocked by default, blocked with `block_private` (demo mode).
-    `checkhook ctl block` may block such a neighbour (a person's decision).
+    `hyeongi ctl block` may block such a neighbour (a person's decision).
   - The LLM review answered a Korean report with Chinese reasons (qwen2.5:7b). The
     prompt now states the language in that language as well, and an answer that still
     contains Chinese characters is asked again once; the report says when that
@@ -121,15 +135,15 @@
   column, so training data from home, a campus Wi-Fi or a cafe can be told apart,
   filtered and evaluated separately (FPR found in the v3 experiments may come from one
   network rather than the model everywhere).
-  - The tag is the name given with `sudo checkhook name-here <name>` (e.g. home,
+  - The tag is the name given with `sudo hyeongi name-here <name>` (e.g. home,
     school), stored per default-gateway MAC in `networks.names`; `unname-here` drops
     it. An unnamed network gets `gw-` + 8 hex of a salted hash of the gateway MAC;
     no gateway (offline) or no MAC (Windows) gives `unknown`. The salt is random per
-    host (`/var/lib/checkhook/net-salt`) and never written to the flow logs: a bare
+    host (`/var/lib/hyeongi/net-salt`) and never written to the flow logs: a bare
     hash of a MAC is reversible in seconds (the first half is a vendor prefix), a
     salted one is not, so a shared CSV says "same network as that row", not which.
-  - The tag is re-read every 30 s and set when a flow ends; checkhookd logs each
-    change ("flow logging: network tag ..."). `checkhook net` shows the tag here.
+  - The tag is re-read every 30 s and set when a flow ends; hyeongid logs each
+    change ("flow logging: network tag ..."). `hyeongi net` shows the tag here.
   - `ml.make_dataset` keeps the column and adds `--net` / `--exclude-net` (keep or
     drop networks) and `--set-net` (tag rows that have none: PCAPs, logs before
     rc34, which become `unknown` otherwise); it prints the flow count per network.
@@ -141,16 +155,16 @@
 - rc33: IPv6 sources are blocked. Before, every detector skipped IPv6 sources on
   purpose (the blocklist was IPv4-only), so an attacker reaching this host over IPv6 was
   detected but never blocked.
-  - XDP: a second pinned map `checkhook_block6` (16-byte source address, same expiry
-    value) next to `checkhook_block`; the program checks IPv6 packets against it.
+  - XDP: a second pinned map `hyeongi_block6` (16-byte source address, same expiry
+    value) next to `hyeongi_block`; the program checks IPv6 packets against it.
     Loaded and run through the kernel verifier and `BPF_PROG_TEST_RUN` on 6.18:
     listed v6 source dropped, other v6 passed, expired entry passed and deleted,
     truncated v6 header passed, IPv4 unchanged. A program attached before rc33 has no
-    IPv6 map: `checkhook xdp` says so, IPv6 blocks fail with a log line instead of
-    stopping the detector, and `sudo systemctl restart checkhook-xdp` attaches the
-    new one (`checkhook.xdp load` over an old program reloads it and keeps the IPv4
+    IPv6 map: `hyeongi xdp` says so, IPv6 blocks fail with a log line instead of
+    stopping the detector, and `sudo systemctl restart hyeongi-xdp` attaches the
+    new one (`hyeongi.xdp load` over an old program reloads it and keeps the IPv4
     entries).
-  - nftables: a second isolated table `ip6 checkhook` (same set/chain/priority -150).
+  - nftables: a second isolated table `ip6 hyeongi` (same set/chain/priority -150).
     Detectors create it when it is missing, without touching the IPv4 table, so an
     upgrade keeps active IPv4 blocks. `ips()` reads both sets through `nft -j`.
   - Windows firewall rules accept IPv6 addresses too (not yet tested on Windows).
@@ -163,40 +177,40 @@
     exact-address list would lag behind by up to a minute. Other hosts in the same
     /64 are therefore not blocked either, as RFC1918 neighbours are not by default.
   - Addresses are compared in canonical form (Snort, Suricata, nfstream, `skip:`
-    and `checkhook ctl block` may spell the same IPv6 address differently).
-  - `checkhook ctl block/unblock/skip-add` accept IPv6. The LLM review is told the
+    and `hyeongi ctl block` may spell the same IPv6 address differently).
+  - `hyeongi ctl block/unblock/skip-add` accept IPv6. The LLM review is told the
     on-link IPv6 networks.
   - Limit: an IPv6 entry is one address (/128). An attacker that rotates addresses
     inside its own /64 needs one entry per address; prefix blocking is not done yet.
   - `lab-netns.sh up` also gives the lab IPv6 addresses (fd99:199::1 host side,
     ::2 attacker) when the host has IPv6, and `mode drop|reject` now applies to
-    both families (table `inet cklab`, `reject with icmpx`; same ICMP answer for
+    both families (table `inet hylab`, `reject with icmpx`; same ICMP answer for
     IPv4 as before). The self-test adds and removes 2001:db8::250 as well.
-- rc32: `lab-netns.sh mode rst|drop|reject` sets how the victim (ck-host) answers an
-  attack, in an isolated nft table `ip cklab` that only matches traffic arriving on
-  ck-host. rst = host default (closed TCP->RST, closed UDP->ICMP unreachable, like Kali);
+- rc32: `lab-netns.sh mode rst|drop|reject` sets how the victim (hy-host) answers an
+  attack, in an isolated nft table `ip hylab` that only matches traffic arriving on
+  hy-host. rst = host default (closed TCP->RST, closed UDP->ICMP unreachable, like Kali);
   drop = silent (firewalld/Windows); reject = ICMP admin-prohibited (a REJECT firewall).
   Snort sniffs the link before netfilter, so it still sees every attack packet — only the
   answer changes. This is the environment switch for collecting ML training data across
   response modes (model v3), all inside the isolated netns, independent of the real
   network. `down` and `mode rst` clear the table; `status` shows the current mode.
-- rc31: `checkhook net` (read-only) no longer needs root; only the commands that
+- rc31: `hyeongi net` (read-only) no longer needs root; only the commands that
   change state (trust-here, untrust-here, block, enforce, ...) still do.
-- rc30: per-network enforcement. CheckHook now decides whether to actually block
-  by the current network's default-gateway MAC. `checkhook ctl trust-here` adds the
+- rc30: per-network enforcement. HYEONGI now decides whether to actually block
+  by the current network's default-gateway MAC. `hyeongi ctl trust-here` adds the
   network you are on (home) to `networks.trusted_gateways`; from then on every other
   network (school, cafe) is observe-only -- detection and the report run as usual, but
   nothing is added to the kernel blocklist, so an unfamiliar network's quirks or a
   stray practice packet can never cause a block you did not intend. Re-read every 30 s,
   so moving between networks switches mode on its own. Opt-in: an empty trusted list
   leaves blocking to `enforce:` everywhere (unchanged). Gated in both the IDS and ML
-  block paths. `checkhook net` shows the current network and whether it enforces;
-  `checkhook services` shows it too; `checkhook ctl untrust-here` removes a network.
-- rc29: a master on/off switch for the whole stack. `checkhook start` / `checkhook stop`
-  (root) start or stop every service at once (checkhookd, ids, xdp, capture); the desktop
+  block paths. `hyeongi net` shows the current network and whether it enforces;
+  `hyeongi services` shows it too; `hyeongi ctl untrust-here` removes a network.
+- rc29: a master on/off switch for the whole stack. `hyeongi start` / `hyeongi stop`
+  (root) start or stop every service at once (hyeongid, ids, xdp, capture); the desktop
   app gets a "전체 가동 / 전체 중단" button next to the service list. Stopping halts
   detection and new blocks but leaves the kernel blocklist as it is — IPs already blocked
-  stay blocked until block_timeout or `checkhook flush` (option 1). `checkhook ctl start|stop`
+  stay blocked until block_timeout or `hyeongi flush` (option 1). `hyeongi ctl start|stop`
   is the privileged path the app calls through pkexec.
 - rc28: the LLM verdict table marks IPs whose only block-capable alerts are review-only
   rules (UDP port scans, payload rules on plain ports) as "(차단 안 됨) / (not blocked)".
@@ -219,7 +233,7 @@
   UDP, not a scan of it (all three models had wrongly called such a peer an attack).
   Every LLM section carries a one-line caveat: advisory only, blocking is decided by the
   rules and ML, and an LLM can invent its reasons.
-- rc26: `python3 -m checkhook.triage_eval --models a,b,c --repeat 3` scores models on
+- rc26: `python3 -m hyeongi.triage_eval --models a,b,c --repeat 3` scores models on
   the review with 10 cases whose answer is known (4 attacks from the lab and an
   internet scan, 6 false positives seen on the laptop: CDN payload matches, a package
   mirror, a QUIC server, a P2P peer, an HTTP 403, a DNS server), three prompts of four
@@ -234,7 +248,7 @@
   log record where and how fast the review ran: GPU share from `/api/ps`, load/prompt/
   generate seconds, tokens against the context, with a warning when part ran on the CPU
   or the prompt filled the context. New `triage:` keys `timeout`, `num_ctx`,
-  `keep_alive`, `retries`; the default host is 127.0.0.1. `checkhookd.service` no longer
+  `keep_alive`, `retries`; the default host is 127.0.0.1. `hyeongid.service` no longer
   orders after the system `ollama.service` (Ollama now runs as a user service).
 - Reviews the IPs that were blocked, or with `enforce: false` would have been
   blocked; before, dry-run left nothing to review.
@@ -304,23 +318,23 @@
 
 **Lab**
 - rc20: `packaging/lab-netns.sh up|down|status` builds an attacker without a VM:
-  network namespace `ckatk` (10.199.0.2) joined to the host by a veth pair
-  (`ck-host`, 10.199.0.1), no route anywhere else. `checkhook demo on ck-host`
+  network namespace `hyatk` (10.199.0.2) joined to the host by a veth pair
+  (`hy-host`, 10.199.0.1), no route anywhere else. `hyeongi demo on hy-host`
   watches it. veth supports native XDP, so generic and native can be compared
   on one machine.
 
 **Status**
-- rc19: manual blocks (app button or `checkhook ctl block`) are counted. They
-  are logged to `/var/lib/checkhook/manual-blocks.log`; `checkhook stats` and
+- rc19: manual blocks (app button or `hyeongi ctl block`) are counted. They
+  are logged to `/var/lib/hyeongi/manual-blocks.log`; `hyeongi stats` and
   the app show today's blocks as automatic + manual. Before, a manual block
   left "blocked today: 0".
 - rc19: the reason shown for a flagged IP is its strongest detection with
   counts (SYN flood, then port scan, SSH brute force, ML, then the most
   frequent), built from every alert of that IP, e.g.
-  `CHECKHOOK possible SYN flood x3 · (port_scan) TCP filtered portscan x1 (+2종)`.
+  `HYEONGI possible SYN flood x3 · (port_scan) TCP filtered portscan x1 (+2종)`.
   Before, it was whichever alert happened to trigger the flag (often a telnet
   probe from the start of a port scan).
-- rc19: `checkhook stats` shows "차단 중" for a flagged IP that is in the
+- rc19: `hyeongi stats` shows "차단 중" for a flagged IP that is in the
   kernel blocklist, as the app already did.
 
 **Alert floods**
@@ -330,7 +344,7 @@
   threshold: one lab flood wrote about 290,000 alerts (190 MB). Detection,
   blocking and re-blocking after `block_timeout` need only one alert. If
   `snort -T` rejects the filter, the script falls back without it.
-- rc18: checkhookd deletes rotated alert files beyond `ids.keep_rotated`
+- rc18: hyeongid deletes rotated alert files beyond `ids.keep_rotated`
   (default 3, i.e. about 300 MB of Snort alerts) and keeps one rotated ML
   alert file.
 - rc18 fix: re-running `install-snort.sh` rewrote every `alert_file:` line in
@@ -374,14 +388,14 @@
 - `packaging/selftest.sh` and `packaging/windows/selftest.ps1`: end-to-end
   checks (config, services, enforcement round trip with 203.0.113.250,
   alert parsing, capture, local network, Ollama). `docs/testing.md`.
-- `checkhook.diag`: read-only probes used by the self-tests.
+- `hyeongi.diag`: read-only probes used by the self-tests.
 
 **Capture**
-- Fixed: every restart of `checkhook-capture` (each boot) started the ring
+- Fixed: every restart of `hyeongi-capture` (each boot) started the ring
   buffer again at `benign.pcap00`, overwriting what earlier boots captured, so
   the benign data set never grew past one session. Files are now named
   `benign-<start time>.pcapNN`; old files are removed only to stay near the size
-  cap (default 4 GB, `CHECKHOOK_CAPTURE_GB`). Reinstall with
+  cap (default 4 GB, `HYEONGI_CAPTURE_GB`). Reinstall with
   `install-capture.sh` to switch.
 - Flow logging now also runs on Linux (`capture.enabled: auto`, on when
   nfstream is installed): one CSV row of features per finished flow. Raw
@@ -393,7 +407,7 @@
   every 30 s.
 
 **Shutdown**
-- Fixed: stopping or restarting checkhookd took 90 s and ended in SIGKILL once
+- Fixed: stopping or restarting hyeongid took 90 s and ended in SIGKILL once
   flow logging was on, because nfstream's capture worker processes ignore
   SIGTERM and Python waited for them at exit. The daemon now flushes the flow
   CSV, kills its own worker processes and exits at once; the unit also sets
@@ -405,10 +419,10 @@
   the IDS bridge.
 - ML detections are written to `ml.alert_file` in the Snort JSON format with
   gid 9000, so the LLM triage reviews them with the IDS alerts, and they show
-  in the app and `checkhook stats`.
+  in the app and `hyeongi stats`.
 
 **Human-in-the-loop blocking**
-- `checkhook ctl block <ip>` and a "선택한 IP 차단" button in the app: a person
+- `hyeongi ctl block <ip>` and a "선택한 IP 차단" button in the app: a person
   blocks an IP for `block_timeout` after reading the LLM review, also with
   `enforce: false`. Refuses this host's DNS servers, gateway, own addresses,
   skip-listed and loopback IPs.
@@ -416,16 +430,16 @@
   dropped-packet counter.
 
 **Demo mode**
-- `checkhook demo on <iface>` / `off`: move IDS, ML and XDP to an isolated lab
+- `hyeongi demo on <iface>` / `off`: move IDS, ML and XDP to an isolated lab
   interface (e.g. a VirtualBox host-only network), with enforce off,
   block_private on and training-data collection paused; `off` restores the
   saved config and Snort unit.
-- `checkhook demo on <iface> --model FILE`: use an ML model only while in
+- `hyeongi demo on <iface> --model FILE`: use an ML model only while in
   demo mode; `off` removes it again or restores the model that was there.
-- `ml.eval` no longer prints the old `checkhook detect` command, warns when
+- `ml.eval` no longer prints the old `hyeongi detect` command, warns when
   the held-out benign set is too small to support a 0% false-positive claim,
   and says so when no held-out attacks were given.
-- Fixed: `checkhook-xdp` stop detached from the interface named in the config
+- Fixed: `hyeongi-xdp` stop detached from the interface named in the config
   instead of the one it was attached to, so switching interfaces left the old
   attachment behind.
 - local.rules: SYN flood and SSH brute-force rules (detection_filter).
@@ -437,14 +451,14 @@
   `nmap -sS` scan already triggered it.
 
 **Desktop app**
-- `checkhook gui` (PySide6, Linux and Windows): status, alerts, blocked and
+- `hyeongi gui` (PySide6, Linux and Windows): status, alerts, blocked and
   would-be-blocked IPs with unblock and add-to-skip, the LLM report with a
   run-now button, enforce on/off and collection pause/resume. Runs as the
-  user; changes go through `checkhook ctl` with pkexec (Linux) or UAC (Windows).
-- checkhookd writes `status.json` (world-readable) every 5 s: today's alert,
+  user; changes go through `hyeongi ctl` with pkexec (Linux) or UAC (Windows).
+- hyeongid writes `status.json` (world-readable) every 5 s: today's alert,
   block and would-block counts, recent alerts with the action taken, flow
   count, services, blocklist.
-- `checkhook stats`: the same summary in the terminal.
+- `hyeongi stats`: the same summary in the terminal.
 - Today's counts, flagged IPs and recent alerts survive daemon restarts.
 
 **Triage schedule**
@@ -453,11 +467,11 @@
   machine the report was a day old. It is now scheduled by the report's age
   (checked every minute, first run 2 minutes after start), retrying after
   10 minutes if a run produced no report.
-- Menu entries: "CheckHook" opens the app, "CheckHook (terminal)" the banner
+- Menu entries: "HYEONGI" opens the app, "HYEONGI (terminal)" the banner
   launcher. Windows installs PySide6 and both Start-menu shortcuts.
 
 **Collection control**
-- `checkhook pause [reason]` / `checkhook resume` (Linux and Windows): stop
+- `hyeongi pause [reason]` / `hyeongi resume` (Linux and Windows): stop
   saving training data during attack practice on the same host while detection
   keeps running. Pauses are logged to `pauses.log`.
 
@@ -469,10 +483,10 @@
 
 ## 2.0.0
 
-First public release of CheckHook.
+First public release of HYEONGI.
 
 **Daemon**
-- `checkhookd`: one daemon with supervised workers: IDS alert bridge, ML flow
+- `hyeongid`: one daemon with supervised workers: IDS alert bridge, ML flow
   detection with flow logging, block expiry, and hourly local-LLM triage.
 - Enforcement is off by default (`enforce: false`, log only). Private,
   loopback, link-local and multicast addresses are never blocked unless
@@ -483,29 +497,29 @@ First public release of CheckHook.
 **Detection**
 - Reads Snort 3 `alert_json` and Suricata `eve.json` (auto-detected per line),
   following rotation and truncation.
-- `checkhook-ids`: a Snort 3 sensor managed by CheckHook (generated config,
+- `hyeongi-ids`: a Snort 3 sensor managed by HYEONGI (generated config,
   `port_scan`, local rules, optional community rules; validated with `-T`).
 - ML detector: nfstream statistical features and a RandomForest classifier;
   `ml.make_dataset`, `ml.train` and `ml.eval` (false-positive rate and
   threshold choice).
-- `checkhook-capture`: boot-time benign-traffic capture (headers only, ring
+- `hyeongi-capture`: boot-time benign-traffic capture (headers only, ring
   buffer), with SELinux and AppArmor handling.
 
 **Enforcement**
-- nftables: isolated table `ip checkhook`, input hook at priority -150, set
+- nftables: isolated table `ip hyeongi`, input hook at priority -150, set
   with timeouts.
-- XDP: `checkhook_xdp.c` with pinned maps in `/sys/fs/bpf/checkhook`; expiry
-  is checked in the kernel. `checkhook-xdp` re-attaches it at boot.
-- Windows: Windows Defender Firewall rules in group `CheckHook`, expiry
+- XDP: `hyeongi_xdp.c` with pinned maps in `/sys/fs/bpf/hyeongi`; expiry
+  is checked in the kernel. `hyeongi-xdp` re-attaches it at boot.
+- Windows: Windows Defender Firewall rules in group `HYEONGI`, expiry
   reconciled by the daemon.
 
 **Platforms**
 - Linux: RHEL/Rocky/Fedora, Debian/Ubuntu, Arch, openSUSE. Installers detect
   the distro and print the right package names. Tested on RHEL 10.2.
-- Windows 10/11: `install.ps1`, scheduled tasks `checkhookd` and
-  `checkhook-suricata`, Npcap capture. Not yet tested on real hardware.
+- Windows 10/11: `install.ps1`, scheduled tasks `hyeongid` and
+  `hyeongi-suricata`, Npcap capture. Not yet tested on real hardware.
 
 **Tools**
-- `checkhook` launcher with banner and menu (`services`, `logs`, `report`,
+- `hyeongi` launcher with banner and menu (`services`, `logs`, `report`,
   `xdp`), desktop entry and icon.
 - `benchmark/`: enforcement-layer benchmarks (nftables vs XDP).

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=HYEONGI (terminal)
+GenericName=AI Firewall
+Comment=HYEONGI banner and command menu in a terminal
+# Opens a terminal, prints the HYEONGI banner + menu, then drops you into an
+# interactive shell inside the project (Kali-tool style).
+Exec=bash -c "cd __HYEONGI_DIR__ && bin/hyeongi; exec bash"
+Icon=__HYEONGI_ICON__
+Terminal=true
+Categories=Security;Network;System;
+StartupNotify=false

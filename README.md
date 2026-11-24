@@ -1,17 +1,19 @@
-<p align="center"><img src="assets/checkhook-256.png" width="112" alt="CheckHook logo"></p>
+<p align="center"><img src="assets/hyeongi-256.png" width="112" alt="HYEONGI logo"></p>
 
-<h1 align="center">CheckHook</h1>
+<h1 align="center">HYEONGI</h1>
 
-<p align="center"><img src="assets/checkhook-banner.png" alt="CHECKHOOK"></p>
+<p align="center"><img src="assets/hyeongi-banner.png" alt="HYEONGI"></p>
 
 ## 소개
 
-CheckHook은 리눅스와 윈도우용 AI 방화벽입니다. 이름은 복싱 기술 체크훅(check hook)에서 따왔습니다.
-체크훅은 달려드는 상대를 몸을 돌려 비켜 내면서 훅을 꽂는 반격 기술입니다. 이름에는 두 가지
-뜻이 겹쳐 있습니다. Hook은 커널의 훅(XDP, nftables)에 붙어 차단 대상의 패킷을 버리는 단계를,
-Check는 로컬 LLM이 차단 대상이 오탐인지 다시 확인하는 단계를 가리킵니다.
+HYEONGI는 리눅스와 윈도우용 AI 방화벽입니다. 이름은 Host-based, Your-network-gated Enforcement
+with On-device Network Guard & Inspection의 머리글자입니다. 보호할 컴퓨터에서 직접 동작하고
+(Host-based), 탐지와 차단(Guard), 로컬 LLM의 오탐 검토(Inspection)를 기본 설정에서 모두 이
+컴퓨터 안에서 합니다(On-device). 리눅스에서는 신뢰 네트워크를 지정할 수 있으며, 지정하면
+탐지기는 그 네트워크에 있을 때만 차단하고 다른 네트워크에서는 탐지만 합니다(Your-network-gated
+Enforcement).
 
-CheckHook은 탐지와 집행을 분리한 구조입니다.
+HYEONGI는 탐지와 집행을 분리한 구조입니다.
 
 - 탐지: Snort 3(또는 Suricata) 시그니처와 머신러닝 트래픽 흐름 분류기가 차단할 IP를 정합니다.
 - 집행: nftables 또는 XDP가 커널에서 해당 IP의 패킷을 버립니다. 차단 목록의 각 항목은
@@ -20,7 +22,7 @@ CheckHook은 탐지와 집행을 분리한 구조입니다.
   로컬 LLM(Ollama)이 나머지의 오탐 가능성을 판단합니다. 오탐이면 설정에 넣을 `skip:` 줄을
   보고서에 적어 줍니다. 검토 단계는 읽기만 하며, 차단 목록과 설정은 사람이 고칩니다.
 
-탐지, 차단 만료, 검토는 데몬 `checkhookd` 하나가 맡습니다. 실행기 `checkhook`으로 상태를
+탐지, 차단 만료, 검토는 데몬 `hyeongid` 하나가 맡습니다. 실행기 `hyeongi`로 상태를
 보고 차단 목록을 관리합니다.
 
 리눅스(RHEL·Rocky·Fedora, Debian·Ubuntu, Arch, openSUSE)와 윈도우 10·11을 지원합니다.
@@ -35,7 +37,7 @@ AI가 계획하고 실행하게 되면서, 사람이 직접 대응하는 방식�
 
 이 문제에 이이제이의 논리를 적용했습니다. 『후한서』 등우·구순 열전에는 후한 조정이
 변방 민족끼리 서로 싸우게 하자고 논의하는 대목이 있으며, 이 대목이 이이제이라는 말의
-뿌리로 꼽힙니다. CheckHook은 이 논리를 네트워크에 옮겨, 크래킹 AI를 보안 AI로 막는 것을
+뿌리로 꼽힙니다. HYEONGI는 이 논리를 네트워크에 옮겨, 크래킹 AI를 보안 AI로 막는 것을
 목표로 합니다.
 
 탐지 계층(시그니처, 머신러닝, 검토용 LLM)은 무엇을 차단할지 판단하고, 커널 계층(nftables,
@@ -107,39 +109,39 @@ XDP)은 그 판단을 빠르고 적은 비용으로 집행합니다. 두 계층�
 ### 리눅스
 
 ```bash
-git clone https://github.com/VertigoJang/checkhook && cd checkhook
+git clone https://github.com/VertigoJang/hyeongi && cd hyeongi
 
 sudo bash packaging/install-capture.sh  wlp0s20f3                # 학습용 정상 트래픽 수집
-sudo bash packaging/install-services.sh --iface wlp0s20f3        # checkhookd, checkhook 명령
+sudo bash packaging/install-services.sh --iface wlp0s20f3        # hyeongid, hyeongi 명령
 sudo bash packaging/install-snort.sh    --iface wlp0s20f3 --community   # Snort 3 센서
 sudo bash packaging/install-xdp.sh      --iface wlp0s20f3        # 선택: XDP 집행
 
-checkhook services      # 서비스 상태
-checkhook logs          # 탐지 기록 확인
+hyeongi services      # 서비스 상태
+hyeongi logs          # 탐지 기록 확인
 ```
 
 `wlp0s20f3` 자리에는 사용하는 네트워크 인터페이스 이름을 넣습니다. 인터페이스 이름은
 `ip -o -4 route show default` 출력에서 `dev` 다음에 나옵니다.
 
-`install-services.sh`는 데몬 `checkhookd`를 systemd 서비스로 등록하고, `checkhook`과
-`checkhookd` 명령을 `/usr/local/bin`에 연결합니다. 패킷 수집, Snort 센서, XDP 로더는 각각
-별도 서비스(`checkhook-capture`, `checkhook-ids`, `checkhook-xdp`)입니다.
+`install-services.sh`는 데몬 `hyeongid`를 systemd 서비스로 등록하고, `hyeongi`와
+`hyeongid` 명령을 `/usr/local/bin`에 연결합니다. 패킷 수집, Snort 센서, XDP 로더는 각각
+별도 서비스(`hyeongi-capture`, `hyeongi-ids`, `hyeongi-xdp`)입니다.
 
 Snort 3 대신 배포판의 Suricata를 쓰려면 Suricata를 설치해 실행한 뒤
 `sudo bash packaging/use-suricata.sh`를 실행합니다. 자세한 내용은 `docs/linux.md`에 있습니다.
 
-모든 설정은 `/etc/checkhook/checkhook.yaml` 파일 하나에서 관리합니다. 설정을 바꾼 뒤에는
-`sudo systemctl restart checkhookd`로 데몬을 다시 시작합니다. 서비스별 상세 설명은
+모든 설정은 `/etc/hyeongi/hyeongi.yaml` 파일 하나에서 관리합니다. 설정을 바꾼 뒤에는
+`sudo systemctl restart hyeongid`로 데몬을 다시 시작합니다. 서비스별 상세 설명은
 `docs/services.md`에 있습니다.
 
-`checkhook`을 인자 없이 실행하면 배너와 명령 목록이 나옵니다. 주요 명령은 다음과 같습니다.
+`hyeongi`를 인자 없이 실행하면 배너와 명령 목록이 나옵니다. 주요 명령은 다음과 같습니다.
 
-- `checkhook status`: 현재 차단 목록 확인
-- `sudo checkhook block <IP>`, `sudo checkhook unblock <IP>`: 수동 차단과 해제
-- `sudo checkhook xdp`: XDP 집행 상태와 버린 패킷 수 확인
-- `sudo checkhook report`: LLM 검토 보고서 즉시 생성
+- `hyeongi status`: 현재 차단 목록 확인
+- `sudo hyeongi block <IP>`, `sudo hyeongi unblock <IP>`: 수동 차단과 해제
+- `sudo hyeongi xdp`: XDP 집행 상태와 버린 패킷 수 확인
+- `sudo hyeongi report`: LLM 검토 보고서 즉시 생성
 
-`bash packaging/install-desktop.sh`를 실행하면 프로그램 메뉴에 CheckHook 아이콘이 생기며,
+`bash packaging/install-desktop.sh`를 실행하면 프로그램 메뉴에 HYEONGI 아이콘이 생기며,
 아이콘을 누르면 터미널에서 실행기가 열립니다.
 
 ### 윈도우
@@ -147,46 +149,46 @@ Snort 3 대신 배포판의 Suricata를 쓰려면 Suricata를 설치해 실행�
 관리자 권한 PowerShell에서 실행합니다.
 
 ```powershell
-git clone https://github.com/VertigoJang/checkhook C:\CheckHook
-cd C:\CheckHook
+git clone https://github.com/VertigoJang/hyeongi C:\HYEONGI
+cd C:\HYEONGI
 powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1
 
-.\checkhook.cmd services      # 상태 확인
-.\checkhook.cmd logs          # 탐지 기록 확인
+.\hyeongi.cmd services      # 상태 확인
+.\hyeongi.cmd logs          # 탐지 기록 확인
 ```
 
-설치 스크립트는 `checkhookd` 예약 작업(부팅 시 SYSTEM 권한으로 시작)과, Suricata가
-설치되어 있으면 `checkhook-suricata` 예약 작업을 등록하고 시작 메뉴에 바로 가기를 만듭니다.
-설정 파일은 `C:\ProgramData\CheckHook\checkhook.yaml`입니다. 자세한 내용은
+설치 스크립트는 `hyeongid` 예약 작업(부팅 시 SYSTEM 권한으로 시작)과, Suricata가
+설치되어 있으면 `hyeongi-suricata` 예약 작업을 등록하고 시작 메뉴에 바로 가기를 만듭니다.
+설정 파일은 `C:\ProgramData\HYEONGI\hyeongi.yaml`입니다. 자세한 내용은
 `docs/windows.md`에 있습니다.
 
 ## 데스크톱 앱
 
-설치 후 앱 메뉴의 **CheckHook**을 누르면 창이 열립니다. 윈도우에서는 시작 메뉴의 CheckHook을 누르고,
+설치 후 앱 메뉴의 **HYEONGI**을 누르면 창이 열립니다. 윈도우에서는 시작 메뉴의 HYEONGI를 누르고,
 관리자 권한 요청에 동의하면 됩니다.
 
-![CheckHook 앱](docs/figures/app-status.png)
+![HYEONGI 앱](docs/figures/app-status.png)
 
 - 상태: 차단 모드, 학습 데이터 수집량, 오늘 경보·차단 수, 서비스 상태
 - 차단 · 경보: 차단했거나 차단할 뻔한 IP와 최근 경보. 선택한 IP를 차단 해제하거나 예외에 추가
 - 검토 보고서: LLM 검토 보고서를 읽고, 버튼으로 바로 검토 실행
 - 차단 켜기·끄기, 학습 데이터 수집 일시정지·재개
 
-앱은 일반 사용자 권한으로 돌고, 상태는 `checkhookd`가 몇 초마다 쓰는 상태 파일에서 읽습니다.
+앱은 일반 사용자 권한으로 돌고, 상태는 `hyeongid`가 몇 초마다 쓰는 상태 파일에서 읽습니다.
 차단 해제나 설정 변경처럼 시스템을 바꾸는 버튼을 누를 때만 비밀번호(리눅스는 pkexec,
 윈도우는 사용자 계정 컨트롤)를 묻습니다. 리눅스에서는 PySide6가 필요합니다.
 
 ```bash
 python3 -m pip install --user PySide6-Essentials
-bash packaging/install-desktop.sh        # 앱 메뉴에 CheckHook과 CheckHook (terminal) 추가
-checkhook stats                          # 터미널에서 같은 요약 보기
+bash packaging/install-desktop.sh        # 앱 메뉴에 HYEONGI와 HYEONGI (terminal) 추가
+hyeongi stats                          # 터미널에서 같은 요약 보기
 ```
 
 ## 머신러닝 모델 학습
 
 머신러닝 탐지는 학습된 모델이 있어야 켜집니다. 학습용 정상 트래픽은 두 가지 형태로 모입니다.
 
-- flow 기록: `checkhookd`가 끝난 연결(flow)마다 통계 특징을 `/var/lib/checkhook/flows/`에
+- flow 기록: `hyeongid`가 끝난 연결(flow)마다 통계 특징을 `/var/lib/hyeongi/flows/`에
   CSV로 남깁니다. 연결 하나에 수백 바이트라 몇 주 분량도 몇 GB 안에 들어갑니다. nfstream이
   설치되어 있으면 자동으로 켜집니다(`capture.enabled: auto`). 학습에는 이쪽을 씁니다.
 - 패킷 헤더: `install-capture.sh`가 설치하는 수집 서비스가 패킷 헤더를 저장합니다. 트래픽이
@@ -197,15 +199,15 @@ checkhook stats                          # 터미널에서 같은 요약 보기
 수집해야 합니다.
 
 ```bash
-python3 -m ml.make_dataset --flows "/var/lib/checkhook/flows/*.csv" --label 0 --out ~/checkhook-data/benign.csv
-python3 -m ml.make_dataset --pcap ~/checkhook-data/attack.pcap --attacker-ip <공격자 IP> --out ~/checkhook-data/attack.csv
-checkhook train --data ~/checkhook-data/benign.csv --data ~/checkhook-data/attack.csv --out ~/checkhook-data/checkhook.joblib
-checkhook eval  --model ~/checkhook-data/checkhook.joblib --data <학습에 쓰지 않은 정상 트래픽>.csv --target-fpr 0.01
+python3 -m ml.make_dataset --flows "/var/lib/hyeongi/flows/*.csv" --label 0 --out ~/hyeongi-data/benign.csv
+python3 -m ml.make_dataset --pcap ~/hyeongi-data/attack.pcap --attacker-ip <공격자 IP> --out ~/hyeongi-data/attack.csv
+hyeongi train --data ~/hyeongi-data/benign.csv --data ~/hyeongi-data/attack.csv --out ~/hyeongi-data/hyeongi.joblib
+hyeongi eval  --model ~/hyeongi-data/hyeongi.joblib --data <학습에 쓰지 않은 정상 트래픽>.csv --target-fpr 0.01
 ```
 
 `eval`은 학습에 쓰지 않은 정상 트래픽으로 오탐률을 측정하고, 목표 오탐률을 만족하는
-임계값을 알려 줍니다. 모델 파일을 `/var/lib/checkhook/model.joblib`에 두고 설정 파일의
-`ml.threshold`를 바꾼 뒤 `sudo systemctl restart checkhookd`로 데몬을 다시 시작하면
+임계값을 알려 줍니다. 모델 파일을 `/var/lib/hyeongi/model.joblib`에 두고 설정 파일의
+`ml.threshold`를 바꾼 뒤 `sudo systemctl restart hyeongid`로 데몬을 다시 시작하면
 머신러닝 탐지가 켜집니다.
 
 ## 안전장치
@@ -218,14 +220,14 @@ checkhook eval  --model ~/checkhook-data/checkhook.joblib --data <학습에 쓰�
 - 모든 차단은 `block_timeout`(기본 1시간)이 지나면 자동으로 해제됩니다.
 - 머신러닝 모델의 성능은 학습 데이터에 달려 있습니다. 모델을 사용하기 전에 `eval`로
   오탐률을 확인해야 합니다.
-- 리눅스에서 CheckHook은 별도의 nftables 테이블(`ip checkhook`, `ip6 checkhook`)만 사용하며 firewalld나 ufw
-  규칙을 수정하지 않습니다. 윈도우에서는 `CheckHook` 그룹의 방화벽 규칙만 만들고 지웁니다.
+- 리눅스에서 HYEONGI는 별도의 nftables 테이블(`ip hyeongi`, `ip6 hyeongi`)만 사용하며 firewalld나 ufw
+  규칙을 수정하지 않습니다. 윈도우에서는 `HYEONGI` 그룹의 방화벽 규칙만 만들고 지웁니다.
 
 ## 디렉터리 구성
 
-- `bin/`: 실행기 `checkhook`과 데몬 `checkhookd`
-- `checkhook.cmd`: 윈도우 실행기
-- `checkhook/`: 방화벽 서비스 (데몬, 차단 목록, IDS 연동, 머신러닝 탐지기, LLM 검토, XDP 집행,
+- `bin/`: 실행기 `hyeongi`와 데몬 `hyeongid`
+- `hyeongi.cmd`: 윈도우 실행기
+- `hyeongi/`: 방화벽 서비스 (데몬, 차단 목록, IDS 연동, 머신러닝 탐지기, LLM 검토, XDP 집행,
   윈도우 방화벽 집행, 설정)
 - `ml/`: 학습 데이터 생성, 모델 학습, 오탐률 평가
 - `benchmark/`: 집행 계층 성능 측정 도구
@@ -237,5 +239,5 @@ checkhook eval  --model ~/checkhook-data/checkhook.joblib --data <학습에 쓰�
 
 ## 라이선스
 
-MIT 라이선스입니다. 단, XDP 프로그램(`checkhook/bpf/checkhook_xdp.c`)은 커널이 BPF 프로그램에
+MIT 라이선스입니다. 단, XDP 프로그램(`hyeongi/bpf/hyeongi_xdp.c`)은 커널이 BPF 프로그램에
 GPL 호환 라이선스 표기를 요구하기 때문에 MIT와 GPL-2.0 이중 라이선스로 배포합니다.
