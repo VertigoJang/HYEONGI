@@ -21,6 +21,14 @@ DEFAULTS = {
     # never block this host's current DNS servers, default gateway and own
     # addresses (re-read every minute, so it follows the laptop between networks)
     "protect_local": True,
+    # per-network enforcement. Empty trusted_gateways = off (enforce follows
+    # `enforce` everywhere). List your home gateway's MAC (checkhook ctl trust-here)
+    # and every other network becomes observe-only: detect, never block.
+    "networks": {"trusted_gateways": [],
+                 # gateway MAC -> name for the `net` column of the flow logs
+                 # (set with: checkhook name-here <name>); unnamed networks get
+                 # a salted "gw-xxxxxxxx" tag
+                 "names": {}},
     # signature IDS: Snort 3 alert_json or Suricata eve.json (auto-detected).
     # Older configs call this section "snort:"; that is still accepted.
     # Alerts that never lead to a block (the triage still sees them):
@@ -31,7 +39,10 @@ DEFAULTS = {
     #   ignore_rules - single rules as "gid:sid" (Suricata rules are gid 1).
     #                  Defaults, all seen on ordinary use of the test laptop:
     #                  1:399 1:402 1:408  ICMP host/port unreachable and echo
-    #                                     reply: replies to this host's traffic
+    #                  1:451              reply, timestamp reply: replies to this
+    #                                     host's traffic (1:451 came from this
+    #                                     host's own server answering nmap's
+    #                                     timestamp probe during a scan of it)
     #                  1:366 1:384 1:480 1:29456  informational "PING" rules:
     #                                     being pinged is not an attack
     #                  122:3 122:7 122:19 122:23  port_scan *sweeps* (one source,
@@ -40,10 +51,19 @@ DEFAULTS = {
     #                                     *scans* against this host (122:1, 122:5,
     #                                     ...) still block.
     "ids": {"enabled": True, "alert_file": "/var/log/checkhook/snort/alert_json.txt",
-            "ignore_gids": [116, 119, 128, 129, 137], "ignore_rules": ["1:399", "1:402", "1:408", "1:366", "1:384", "1:480", "1:29456",
+            "ignore_gids": [116, 119, 128, 129, 137], "ignore_rules": ["1:396", "1:399", "1:402", "1:408", "1:449", "1:451", "1:366", "1:384", "1:480", "1:29456",
                              "122:3", "122:7", "122:19", "122:23"],
             # Snort renames a full alert file (100 MB) to <name>.<time>; keep this many
-            "keep_rotated": 3},
+            "keep_rotated": 3,
+            # payload signatures matching on these ports matched ciphertext: ignored there
+            "payload_block": False,
+            # never block on their own (shown and reviewed): UDP port scans
+            "review_rules": ["122:17", "122:18", "122:20", "122:21", "122:22", "122:24", "1:1201",
+                             # DNS spoof (TTL 1 min): the source of a spoofed answer is the
+                             # resolver it imitates, so blocking it cuts off DNS, not the attacker
+                             "1:254"],
+            "encrypted_ports": [443, 465, 563, 636, 853, 989, 990, 992, 993, 994, 995, 5061, 8443],
+            "payload_rule_prefixes": ["INDICATOR-SHELLCODE", "SHELLCODE"]},
     "ml": {"enabled": True, "iface": "eth0",
            "model": "/var/lib/checkhook/model.joblib",
            "threshold": 0.9, "idle": 15, "active": 120,
@@ -52,9 +72,13 @@ DEFAULTS = {
            "alert_file": "/var/log/checkhook/ml_alerts.json"},
     "xdp": {"iface": "eth0", "mode": "generic"},
     "triage": {"enabled": True, "alert_file": "/var/log/snort/alert_json.txt",
-               "last": 500, "model": "qwen2.5:7b",
+               "last": 500,
                "summary_minutes": 60, "settle": 20,
-               "host": "http://localhost:11434", "lang": "English",
+               "host": "http://127.0.0.1:11434", "lang": "English",
+               # one review may queue behind another Ollama client, then cold-load
+               "timeout": 300, "num_ctx": 4096, "keep_alive": "5m", "retries": 1,
+               # if the main model fails or runs mostly on the CPU, fall back to this lighter one
+               "model": "qwen2.5:7b", "fallback_model": "qwen2.5:3b",
                "out": "/var/lib/checkhook/triage/report.txt"},
     # flow logging for ML training data: every finished flow's features go to
     # CSV (a few hundred bytes per flow, versus megabytes of raw packets).
@@ -105,4 +129,5 @@ def load(path=None):
     if "snort" in data:                       # backward compatibility (<= 1.0)
         legacy = data.pop("snort")
         data.setdefault("ids", legacy)
-    return _merge(DEFAULTS, data)
+    from checkhook.tune import resolve_auto       # `auto` values -> fitted to this machine
+    return resolve_auto(_merge(DEFAULTS, data))

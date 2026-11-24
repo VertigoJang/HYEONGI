@@ -5,7 +5,7 @@
 # Settings: /etc/checkhook/checkhook.yaml  (enforce: false = dry-run, blocks nothing)
 # Logs:     journalctl -u checkhookd
 Description=CheckHook daemon (detection -> blocklist -> kernel enforcement)
-After=network-online.target checkhook-xdp.service checkhook-ids.service ollama.service
+After=network-online.target checkhook-xdp.service checkhook-ids.service
 Wants=network-online.target
 
 [Service]

@@ -35,6 +35,11 @@ def _ps(script):
         capture_output=True, text=True)
 
 
+
+def _sortkey(ip):
+    a = ipaddress.ip_address(ip)
+    return (a.version, a)
+
 class _Lock:
     """Cross-process lock via an exclusively created file (stale after 30 s)."""
 
@@ -97,10 +102,9 @@ class WinFirewall:
 
     # --------------------------------------------------------------- rules
     def _apply(self, entries):
-        ips = sorted(entries, key=ipaddress.ip_address)
-        for ip in ips:                                   # defence in depth
-            if ipaddress.ip_address(ip).version != 4:
-                raise ValueError(ip)
+        ips = sorted(entries, key=_sortkey)
+        for ip in ips:                                   # defence in depth: only
+            ipaddress.ip_address(ip)                     # real addresses reach PowerShell
         lines = ["$ErrorActionPreference = 'Stop'",
                  f"Get-NetFirewallRule -Group '{GROUP}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule"]
         for n, i in enumerate(range(0, len(ips), CHUNK), 1):
@@ -115,9 +119,7 @@ class WinFirewall:
 
     # ------------------------------------------------------------- public API
     def add(self, ip, seconds):
-        addr = ipaddress.ip_address(ip)
-        if addr.version != 4:
-            raise ValueError(f"IPv4 only: {ip}")
+        addr = ipaddress.ip_address(ip)                  # IPv4 or IPv6; raises otherwise
         with _Lock(self.lockfile):
             entries = self._live(self._load())
             entries[str(addr)] = self.now() + seconds if seconds else 0
@@ -134,7 +136,7 @@ class WinFirewall:
     def entries(self):
         """[(ip, expiry_epoch)] that are still active (0 = never)."""
         return sorted(self._live(self._load()).items(),
-                      key=lambda e: ipaddress.ip_address(e[0]))
+                      key=lambda e: _sortkey(e[0]))
 
     def reconcile(self):
         """Drop expired entries and rebuild rules if anything changed.

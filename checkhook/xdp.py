@@ -31,7 +31,8 @@ OBJ_DIR = "/usr/local/lib/checkhook"
 OBJ = os.path.join(OBJ_DIR, "checkhook_xdp.o")
 PIN_DIR = "/sys/fs/bpf/checkhook"
 PROG_PIN = os.path.join(PIN_DIR, "prog")
-BLOCK_MAP = os.path.join(PIN_DIR, "checkhook_block")
+BLOCK_MAP = os.path.join(PIN_DIR, "checkhook_block")        # IPv4 sources
+BLOCK6_MAP = os.path.join(PIN_DIR, "checkhook_block6")      # IPv6 sources (since 3.0.0rc33)
 STATS_MAP = os.path.join(PIN_DIR, "checkhook_stats")
 ATTACH = {"generic": "xdpgeneric", "native": "xdpdrv"}
 
@@ -54,6 +55,11 @@ IFACE_FILE = "/run/checkhook-xdp.iface"   # where the program is attached right 
 
 def loaded():
     return os.path.exists(BLOCK_MAP) and os.path.exists(PROG_PIN)
+
+
+def has_ipv6():
+    """True if the loaded program has the IPv6 map (programs before rc33 do not)."""
+    return os.path.exists(BLOCK6_MAP)
 
 
 def build():
@@ -80,9 +86,16 @@ def load(iface, mode="generic"):
     need("bpftool", "bpftool")
     if mode not in ATTACH:
         sys.exit(f"[x] mode must be one of {list(ATTACH)}")
+    keep = []
     if loaded():
-        print(f"[=] already loaded ({PIN_DIR}); entries kept")
-        return
+        if has_ipv6():
+            print(f"[=] already loaded ({PIN_DIR}); entries kept")
+            return
+        # an older program without the IPv6 map: replace it, keeping the IPv4 blocks
+        from checkhook.blocklist import _xdp_entries
+        keep = _xdp_entries()
+        print(f"[*] loaded program has no IPv6 map; reloading ({len(keep)} entries kept)")
+        unload(iface)
     build()
     os.makedirs(PIN_DIR, exist_ok=True)
     _run(["bpftool", "prog", "load", OBJ, PROG_PIN, "type", "xdp", "pinmaps", PIN_DIR])
@@ -96,11 +109,14 @@ def load(iface, mode="generic"):
             f.write(iface + "\n")
     except OSError:
         pass
+    if keep:
+        from checkhook.blocklist import _xdp_restore
+        _xdp_restore(keep)
     print(f"[+] XDP attached to {iface} ({mode}); blocklist map: {BLOCK_MAP}")
 
 
 def _cleanup_pins():
-    for p in (PROG_PIN, BLOCK_MAP, STATS_MAP):
+    for p in (PROG_PIN, BLOCK_MAP, BLOCK6_MAP, STATS_MAP):
         if os.path.exists(p):
             os.unlink(p)
     if os.path.isdir(PIN_DIR) and not os.listdir(PIN_DIR):
@@ -156,8 +172,10 @@ def status():
     from checkhook.blocklist import Blocklist
     ips = Blocklist(backend="xdp").ips()
     dropped, expired = stats()
+    v6 = sum(1 for ip in ips if ":" in ip)
     print(f"XDP enforcement: loaded ({PIN_DIR})")
-    print(f"  blocked IPs : {len(ips)}")
+    print(f"  blocked IPs : {len(ips)} (IPv4 {len(ips) - v6}, IPv6 {v6})"
+          + ("" if has_ipv6() else "  [!] no IPv6 map: sudo systemctl restart checkhook-xdp"))
     print(f"  dropped pkts: {dropped}   expired entries removed: {expired}")
     net = _run(["bpftool", "net", "show"], check=False).stdout.splitlines()
     xdp_lines, in_xdp = [], False

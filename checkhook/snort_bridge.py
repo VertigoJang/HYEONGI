@@ -18,7 +18,7 @@ import time
 
 from checkhook.alerts import Ignore, parse_alert
 from checkhook.blocklist import Blocklist
-from checkhook.policy import should_skip
+from checkhook.policy import norm_ip, should_skip
 
 
 def follow(path, from_start, stop=None):
@@ -55,7 +55,7 @@ def follow(path, from_start, stop=None):
 
 def run(alert_file, bl=None, skip=(), block_private=False, from_start=False,
         log=print, stop=None, ignore_gids=(), refresh=3600, clock=time.monotonic,
-        ignore_rules=(), local=None, on_event=None):
+        ignore_rules=(), local=None, on_event=None, ignore=None, policy=None):
     """Follow an IDS alert file and block (bl given) or only report sources.
 
     bl: a Blocklist to enforce with, or None for dry-run.
@@ -70,7 +70,8 @@ def run(alert_file, bl=None, skip=(), block_private=False, from_start=False,
     refresh: seconds after which a source that keeps alerting is added again
       (= block_timeout, so an attacker is blocked again once its block expired).
     """
-    seen = {}; skip = set(skip); ignore = Ignore(ignore_gids, ignore_rules)
+    seen = {}; skip = {norm_ip(str(x)) for x in skip}
+    ignore = ignore if ignore is not None else Ignore(ignore_gids, ignore_rules)
     log(f"[*] tail {alert_file}" + (f" (not blocking on: {ignore})" if ignore else ""))
     for line in follow(alert_file, from_start, stop):
         al = parse_alert(line)                 # Snort alert_json or Suricata eve.json
@@ -83,6 +84,13 @@ def run(alert_file, bl=None, skip=(), block_private=False, from_start=False,
         if ignore(al):
             ev(al, "ignored"); continue
         now = clock()
+        if getattr(ignore, "review_only", None) and ignore.review_only(al):
+            # payload match on a plain port, or a UDP port scan: reviewed, never blocks alone
+            key = ("review", src)
+            if key not in seen or now - seen[key] >= refresh:
+                seen[key] = now
+                log(f"[review]      {src}  ({al['ids']} {al.get('gid', 1)}:{al['sid']} {al['msg']})  not blocked: review-only rule")
+            ev(al, "review"); continue
         if src in seen and now - seen[src] < refresh:
             ev(al, "recent"); continue
         seen[src] = now
@@ -90,11 +98,16 @@ def run(alert_file, bl=None, skip=(), block_private=False, from_start=False,
             if bl is None:
                 log(f"[skip]        {src}")
             ev(al, "skip"); continue
-        tag = "[BLOCK]" if bl is not None else "[would-block]"
-        if bl is not None:
-            bl.add(src)
-        ev(al, "blocked" if bl is not None else "would-block")
-        log(f"{tag} {src}  ({al['ids']} sid={al['sid']} {al['msg']})")
+        block = bl is not None and (policy is None or policy.allowed())
+        extra = "  (observe-only on this network)" if (bl is not None and not block) else ""
+        if block:
+            try:
+                bl.add(src)
+            except (RuntimeError, ValueError) as e:
+                block, extra = False, f"  (block failed: {e})"
+        tag = "[BLOCK]" if block else "[would-block]"
+        ev(al, "blocked" if block else "would-block")
+        log(f"{tag} {src}  ({al['ids']} sid={al['sid']} {al['msg']}){extra}")
 
 
 def main():

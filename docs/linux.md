@@ -73,7 +73,7 @@ tcpdump는 root로 시작해 인터페이스를 연 뒤 일반 사용자로 권�
 
 ## 방화벽 관리 도구와의 관계
 
-CheckHook은 별도의 nftables 테이블(`ip checkhook`)만 사용합니다. firewalld(RHEL, Fedora,
+CheckHook은 별도의 nftables 테이블 두 개(IPv4용 `ip checkhook`, IPv6용 `ip6 checkhook`)만 사용합니다. firewalld(RHEL, Fedora,
 openSUSE)나 ufw(Ubuntu)의 규칙은 수정하지 않습니다. nftables에서는 한 테이블의 drop이
 다른 테이블의 accept보다 우선하므로, 차단 목록의 IP는 다른 도구의 설정과 관계없이
-차단됩니다. 설치 후 `sudo nft list tables`로 `ip checkhook` 테이블이 있는지 확인할 수 있습니다.
+차단됩니다. 설치 후 `sudo nft list tables`로 `ip checkhook`과 `ip6 checkhook` 테이블이 있는지 확인할 수 있습니다.

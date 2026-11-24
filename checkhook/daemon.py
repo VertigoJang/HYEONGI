@@ -18,6 +18,7 @@ Workers (each restarts itself with back-off if it fails):
 Safety is the same as everywhere else: with `enforce: false` nothing is
 blocked; detectors only log what they would block.
 """
+from checkhook.alerts import Ignore, ENCRYPTED_PORTS, PAYLOAD_PREFIXES, REVIEW_RULES
 import argparse
 import logging
 import logging.handlers
@@ -88,6 +89,17 @@ def main():
         except (ValueError, OSError):
             pass
 
+    from checkhook.practice import state as practice_state
+    if practice_state():                      # started anyway during practice mode: wait
+        ps = practice_state()
+        log.warning(f"practice mode since {ps['start']}: waiting, nothing runs until "
+                    "`checkhook practice end`")
+        while practice_state() and not stop.wait(10):
+            pass
+        if stop.is_set():
+            return 0
+        log.info("practice mode ended: starting")
+
     from checkhook.blocklist import Blocklist
     backend, timeout = c["backend"], c["block_timeout"]
     enforcer = Blocklist(backend=backend, default_timeout=timeout)
@@ -102,6 +114,14 @@ def main():
     from checkhook.status import Board
     board = Board(c)
     board.restore()
+    from checkhook.netinfo import NetworkPolicy
+    _net = c.get("networks") or {}
+    policy = NetworkPolicy(_net.get("trusted_gateways") or [])
+    if policy.trusted:
+        cur = policy.current()
+        log.info(f"network gating on: {len(policy.trusted)} trusted gateway(s); "
+                 f"here gw={cur['gateway']} mac={cur['mac']} -> "
+                 f"{'enforce' if cur['trusted'] else 'observe-only'}")
 
     # ---- ids ------------------------------------------------------------------
     if c["ids"].get("enabled", True):
@@ -113,8 +133,13 @@ def main():
             c["ids"]["alert_file"], bl, c["skip"], c["block_private"],
             log=log.info, stop=stop, ignore_gids=c["ids"].get("ignore_gids") or [],
             ignore_rules=c["ids"].get("ignore_rules") or [], refresh=refresh,
-            local=LocalInfra() if c.get("protect_local", True) else None,
-            on_event=board.alert), stop, log))
+            ignore=Ignore(c["ids"].get("ignore_gids") or [], c["ids"].get("ignore_rules") or [],
+                          c["ids"].get("encrypted_ports", ENCRYPTED_PORTS),
+                          c["ids"].get("payload_rule_prefixes", PAYLOAD_PREFIXES),
+                          c["ids"].get("payload_block", False),
+                          c["ids"].get("review_rules", REVIEW_RULES)),
+            local=LocalInfra(onlink_local=not c["block_private"]) if c.get("protect_local", True) else None,
+            on_event=board.alert, policy=policy), stop, log))
 
     # ---- flows: ML + flow logging, one capture ---------------------------------
     ml, cap = c["ml"], dict(c["capture"])
@@ -147,9 +172,18 @@ def main():
             on_flow = None
             if logger:
                 from checkhook.collect import paused
+                from checkhook.netinfo import Direction, NetTagger, load_salt, salt_path
+                tagger = NetTagger((c.get("networks") or {}).get("names") or {},
+                                   load_salt(salt_path(cap["dir"]), create=True))
+                direction = Direction()
+                last = [None]
                 def on_flow(flow):              # checkhook pause: keep detecting, stop logging
                     if not paused():
-                        logger.write(flow)
+                        net = tagger.current()
+                        if net != last[0]:
+                            log.info(f"flow logging: network tag {net}")
+                            last[0] = net
+                        logger.write(flow, net, direction(flow.src_ip, flow.dst_ip))
                         board.flow()
             from checkhook.blocklist import parse_timeout
             from checkhook.netinfo import LocalInfra
@@ -157,9 +191,10 @@ def main():
                 ml_detector.run(iface, clf, bl, ml["threshold"], c["block_private"],
                                 ml["idle"], ml["active"], log=log.info,
                                 on_flow=on_flow, stop=stop, skip=c["skip"],
-                                local=LocalInfra() if c.get("protect_local", True) else None,
+                                local=(LocalInfra(onlink_local=not c["block_private"])
+                                       if c.get("protect_local", True) else None),
                                 refresh=parse_timeout(c["block_timeout"]) or 3600,
-                                on_event=board.alert,
+                                on_event=board.alert, policy=policy,
                                 alerts=ml_detector.AlertWriter(ml["alert_file"]) if clf is not None else None)
             finally:
                 if logger:

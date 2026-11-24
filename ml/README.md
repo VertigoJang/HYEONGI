@@ -30,6 +30,41 @@ python3 -m ml.make_dataset --pcap monday.pcap --pcap wednesday.pcap \
     --attacker-ip 205.174.165.73 172.16.0.1 --out flows.csv
 ```
 
+**Split by network.** Flow logs since 3.0.0rc34 carry a `net` column (the name
+given with `sudo checkhook name-here home`, else a salted `gw-xxxxxxxx`, else
+`unknown`). Keep or drop networks, and tag rows that have none (PCAPs, older
+logs) with `--set-net`:
+
+```bash
+python3 -m ml.make_dataset --flows "/var/lib/checkhook/flows/*.csv" --label 0 --net home --out home.csv
+python3 -m ml.make_dataset --flows "/var/lib/checkhook/flows/*.csv" --label 0 --exclude-net home --out other.csv
+python3 -m ml.eval --model model.joblib --data other.csv --data attack.csv --by-net
+```
+
+`--by-net` prints FPR and TPR per network at `--threshold` (default 0.90), so
+over-flagging that comes from one network shows up as such.
+
+**Direction matters.** The detectors only act on flows another host started.
+Build benign data from those (`--dir in`), and split by time rather than by
+random flows (flows of one session are near-identical):
+
+```bash
+python3 -m ml.make_dataset --flows "/var/lib/checkhook/flows/flows-202611[01]*.csv" --label 0 --dir in --out benign-train.csv
+python3 -m ml.make_dataset --flows "/var/lib/checkhook/flows/flows-2026112*.csv"   --label 0 --out benign-eval.csv
+python3 -m ml.eval --model model.joblib --data benign-eval.csv --by-dir
+```
+
+**Where do false positives come from?** On held-out benign flows (and,
+optionally, attack flows):
+
+```bash
+python3 -m ml.fp_report --model model.joblib --data benign-eval.csv --data attack-eval.csv
+```
+
+It lists false positives by service and network, compares flow sizes of benign
+flows the model passed, benign flows it flagged and attacks, and says when the
+model is using "small flow" as the attack signal.
+
 ## 2. Train
 
 ```bash

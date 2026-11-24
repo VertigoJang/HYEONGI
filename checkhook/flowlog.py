@@ -1,8 +1,11 @@
 """Write finished flows to rotating CSV files (ML training data).
 
 The same nfstream statistical features the model uses, plus addressing columns
-so ml.make_dataset can label the rows later. No payload is ever stored. Much
-smaller than raw packets, so weeks of normal traffic fit in a few GB.
+so ml.make_dataset can label the rows later, and `net`: which network the host
+was on (a name from networks.names, else a salted "gw-xxxxxxxx" tag, else
+"unknown"; see netinfo.net_tag), and `dir`: "in" if another host started the
+flow, "out" if this host did (see netinfo.Direction). No payload is ever stored. Much smaller than
+raw packets, so weeks of normal traffic fit in a few GB.
 
 Files: <dir>/flows-YYYYmmdd-HHMMSS.csv, a new file every `rows_per_file` flows,
 only the newest `keep` files are kept.
@@ -14,7 +17,7 @@ import time
 
 from checkhook.features import FEATURES
 
-META = ["ts_ms", "src_ip", "src_port", "dst_ip", "dst_port", "protocol"]
+META = ["ts_ms", "src_ip", "src_port", "dst_ip", "dst_port", "protocol", "net", "dir"]
 
 
 class FlowLogger:
@@ -43,12 +46,12 @@ class FlowLogger:
             except OSError:
                 pass
 
-    def write(self, flow):
+    def write(self, flow, net="unknown", direction=""):
         if self._w is None or self._rows >= self.rows_per_file:
             self._open()
         row = [getattr(flow, "bidirectional_first_seen_ms", 0), flow.src_ip,
                getattr(flow, "src_port", 0), flow.dst_ip, getattr(flow, "dst_port", 0),
-               getattr(flow, "protocol", 0)]
+               getattr(flow, "protocol", 0), net or "unknown", direction or ""]
         row += [getattr(flow, f, 0) or 0 for f in FEATURES]
         self._w.writerow(row)
         self._rows += 1

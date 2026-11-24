@@ -91,6 +91,9 @@ def main():
                 "--summary-minutes", str(sect.get("summary_minutes", 60)),
                 "--settle", str(sect.get("settle", 20)),
                 "--model", sect["model"], "--host", sect["host"],
+                "--timeout", str(sect.get("timeout", 300)), "--num-ctx", str(sect.get("num_ctx", 4096)),
+                "--keep-alive", str(sect.get("keep_alive", "5m")), "--retries", str(sect.get("retries", 1)),
+                "--fallback-model", str(sect.get("fallback_model", "")),
                 "--lang", sect["lang"], "--backend", c["backend"]]
         ml_alerts = c["ml"].get("alert_file")
         if ml_alerts and os.path.exists(ml_alerts):
@@ -108,6 +111,14 @@ def main():
         rules = c["ids"].get("ignore_rules") or []
         if rules:
             argv += ["--ignore-rules", ",".join(str(r) for r in rules)]
+        if "encrypted_ports" in c["ids"]:
+            argv += ["--encrypted-ports", ",".join(str(p) for p in c["ids"]["encrypted_ports"] or [])]
+        if "payload_rule_prefixes" in c["ids"]:
+            argv += ["--payload-prefixes", ",".join(c["ids"]["payload_rule_prefixes"] or [])]
+        if "review_rules" in c["ids"]:
+            argv += ["--review-rules", ",".join(str(r) for r in c["ids"]["review_rules"] or [])]
+        if c["ids"].get("payload_block"):
+            argv += ["--payload-block"]
         if out:
             argv += ["--out", out]
         run(m, argv)

@@ -12,6 +12,9 @@ block_timeout: 1h         # blocks expire on their own (checkhookd removes them)
 block_private: false      # never block private/LAN addresses unless true
 skip: []                  # IPs that must never be blocked, e.g. [192.168.0.1]
 protect_local: true       # never block this host's current DNS servers, gateway, own addresses
+# per-network enforcement: list your home gateway MAC (checkhook ctl trust-here);
+# then every other network is observe-only. Empty = off (enforce everywhere).
+networks: {trusted_gateways: []}
 
 ids:                      # Suricata eve.json (written by the checkhook-suricata task)
   enabled: true
@@ -38,7 +41,12 @@ triage:                   # "Check": read-only LLM review of flagged IPs (local 
   summary_minutes: 60      # per-IP evidence for the LLM covers this many minutes
   settle: 20               # wait until detectors stop reporting (seconds, 0 = off)
   model: qwen2.5:7b
-  host: http://localhost:11434
+  host: http://127.0.0.1:11434
+  timeout: 300            # seconds: queue behind another Ollama client + cold load + answer
+  num_ctx: 4096           # context sent to Ollama; the report warns when the prompt fills it
+  keep_alive: 5m          # how long Ollama keeps the model loaded after a review
+  retries: 1              # after a refused connection or a 5xx, 10 s apart
+  fallback_model: qwen2.5:3b   # used if the main model fails or runs mostly on the CPU (empty = off)
   lang: Korean
   out: C:\ProgramData\CheckHook\triage\report.txt
 

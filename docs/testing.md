@@ -32,13 +32,15 @@
 ```bash
 sudo bash packaging/lab-netns.sh up          # ckatk(10.199.0.2) ⇄ ck-host(10.199.0.1)
 sudo checkhook demo on ck-host --model 모델파일
-sudo ip netns exec ckatk nmap -sS -p 1-1000 10.199.0.1
+sudo ip netns exec ckatk nmap -n -sS -p 1-1000 10.199.0.1
 sudo ip netns exec ckatk timeout 10 hping3 -S -p 80 -i u1000 10.199.0.1
 sudo checkhook demo off
+sudo bash packaging/lab-netns.sh mode drop   # 피해자 응답 방식 전환 (rst|drop|reject)
 sudo bash packaging/lab-netns.sh down
 ```
 
 - 공격자 네임스페이스에는 기본 경로가 없어 10.199.0.1 말고는 아무 데도 닿지 않습니다.
+- 네임스페이스 안에는 DNS가 없어서 nmap은 반드시 `-n`을 붙입니다. 빼면 이름 조회 단계에서 멈추거나 비정상 종료합니다.
 - veth는 native XDP를 지원하므로 같은 링크에서 generic과 native를 비교할 수 있습니다.
 
 ## LLM(Ollama)

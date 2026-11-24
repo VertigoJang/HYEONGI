@@ -218,7 +218,7 @@ checkhook eval  --model ~/checkhook-data/checkhook.joblib --data <학습에 쓰�
 - 모든 차단은 `block_timeout`(기본 1시간)이 지나면 자동으로 해제됩니다.
 - 머신러닝 모델의 성능은 학습 데이터에 달려 있습니다. 모델을 사용하기 전에 `eval`로
   오탐률을 확인해야 합니다.
-- 리눅스에서 CheckHook은 별도의 nftables 테이블(`ip checkhook`)만 사용하며 firewalld나 ufw
+- 리눅스에서 CheckHook은 별도의 nftables 테이블(`ip checkhook`, `ip6 checkhook`)만 사용하며 firewalld나 ufw
   규칙을 수정하지 않습니다. 윈도우에서는 `CheckHook` 그룹의 방화벽 규칙만 만들고 지웁니다.
 
 ## 디렉터리 구성

@@ -113,6 +113,22 @@ def service_states():
     return out
 
 
+def live_services(s=None, stale=60):
+    """Service states as they are now, not as the last status.json has them.
+
+    checkhookd writes status.json itself, so once it stops the file keeps saying
+    "active" for every unit. Linux: ask systemd directly (no root needed).
+    Windows: asking costs a PowerShell start, so the file is used while it is
+    fresh; once it is older than `stale` seconds checkhookd is not writing it
+    and the states are reported as unknown instead of repeated."""
+    if not WINDOWS:
+        return service_states()
+    s = s or {}
+    if time.time() - s.get("written", 0) < stale:
+        return dict(s.get("services") or {})
+    return {k: "unknown" for k in (s.get("services") or TASKS)}
+
+
 class Board:
     """Thread-safe record of what the daemon saw and did."""
 
@@ -152,7 +168,7 @@ class Board:
             self.flagged = {}
 
     def alert(self, al, action):
-        """action: blocked | would-block | skip | ignored | recent (already acted on)."""
+        """action: blocked | would-block | skip | ignored | review | recent (already acted on)."""
         now = time.time()
         with self.lock:
             self._rollover()
@@ -166,7 +182,9 @@ class Board:
                 f.update(last=now, action=action)
                 f["count"] += 1
             f = self.flagged.get(al.get("src"))
-            if f is not None and action in ("blocked", "would-block", "recent"):
+            if action == "review":
+                self.counts["review"] += 1
+            if f is not None and action in ("blocked", "would-block", "recent", "review"):
                 # every alert of a flagged IP feeds its reason, not only the first
                 gid = al.get("gid", 1)
                 key = f"{gid}:{al.get('sid')}"
@@ -254,7 +272,7 @@ def read(path=None):
 
 
 ACTION_KO = {"blocked": "차단", "would-block": "차단 예정(기록만)", "skip": "예외",
-             "ignored": "무시 규칙", "recent": "이미 처리"}
+             "ignored": "무시 규칙", "review": "검토만(내용 규칙)", "recent": "이미 처리"}
 STATE_KO = {"active": "실행 중", "inactive": "멈춤", "failed": "실패", "missing": "설치 안 됨",
             "activating": "시작 중", "unknown": "알 수 없음"}
 
@@ -262,7 +280,10 @@ STATE_KO = {"active": "실행 중", "inactive": "멈춤", "failed": "실패", "m
 def summary(s):
     age = time.time() - s["written"]
     L = [f"CheckHook {s['version']}  (상태 갱신 {age:.0f}초 전)"]
-    if age > 60:
+    if s.get("live") and s.get("services", {}).get("checkhookd") != "active":
+        L.append("  ! checkhookd가 멈춰 있습니다. 아래 수치는 멈추기 전 마지막 값입니다 "
+                 "(서비스 상태만 지금 값). 켜기: sudo checkhook start")
+    elif age > 60:
         L.append("  ! 상태 파일이 오래됐습니다. checkhookd가 멈췄을 수 있습니다: systemctl status checkhookd")
     mode = "차단 켜짐" if s["enforce"] else "기록만 함 (enforce: false)"
     if s.get("demo"):
@@ -305,6 +326,8 @@ def main(argv=None):
     except FileNotFoundError:
         print(f"{PATH} 없음: checkhookd가 아직 상태를 쓰지 않았습니다 (3.0 이상, 실행 중인지 확인).")
         return 1
+    if "--json" not in argv:                  # --json stays the raw file
+        s = dict(s, services=live_services(s), live=True)
     print(json.dumps(s, ensure_ascii=False, indent=1) if "--json" in argv else summary(s))
     return 0
 

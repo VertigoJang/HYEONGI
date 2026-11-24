@@ -6,11 +6,13 @@ matching source traffic. Entries carry a timeout so a dynamic,
 detector-driven blocklist expires on its own.
 
 Backends:
-  nft  - nftables set in an isolated table 'ip checkhook' (input hook, prio -150).
-         Separate from firewalld's tables; removed with `nft delete table ip checkhook`.
-  xdp  - XDP program + pinned eBPF hash map (/sys/fs/bpf/checkhook), loaded by
-         `python3 -m checkhook.xdp load`. Drops before the kernel allocates an skb.
-         Expiry is checked in-kernel against CLOCK_MONOTONIC.
+  nft  - nftables sets in isolated tables 'ip checkhook' (IPv4) and 'ip6 checkhook'
+         (IPv6), input hook, prio -150. Separate from firewalld's tables; removed
+         with `nft delete table ip checkhook` / `nft delete table ip6 checkhook`.
+  xdp  - XDP program + pinned eBPF hash maps (/sys/fs/bpf/checkhook; one for IPv4,
+         one for IPv6), loaded by `python3 -m checkhook.xdp load`. Drops before the
+         kernel allocates an skb (native mode). Expiry is checked in-kernel
+         against CLOCK_MONOTONIC.
   winfw - Windows Defender Firewall rules (group "CheckHook"), see checkhook.winfw.
          Expiry is enforced by checkhookd (reconcile every minute).
 
@@ -27,6 +29,17 @@ import time
 TABLE = "checkhook"
 SETNAME = "blocklist"
 BACKENDS = ("nft", "xdp", "winfw")
+# nft table family and set element type per IP version
+NFT = {4: ("ip", "ipv4_addr", "ip"), 6: ("ip6", "ipv6_addr", "ip6")}
+
+
+def _version(ip):
+    return ipaddress.ip_address(ip).version
+
+
+def _sortkey(ip):
+    a = ipaddress.ip_address(ip)
+    return (a.version, a)
 
 
 def _run(cmd):
@@ -65,15 +78,32 @@ class Blocklist:
         if self.backend == "xdp":
             from checkhook import xdp
             return xdp.loaded()
-        return _run(["nft", "list", "table", "ip", TABLE]).returncode == 0
+        return all(self._nft_has(v) for v in NFT)
+
+    @staticmethod
+    def _nft_has(v):
+        return _run(["nft", "list", "table", NFT[v][0], TABLE]).returncode == 0
+
+    @staticmethod
+    def _nft_create(v):
+        fam, typ, match = NFT[v]
+        _run(["nft", "delete", "table", fam, TABLE])  # clean slate
+        _run(["nft", "add", "table", fam, TABLE])
+        _run(["nft", "add", "set", fam, TABLE, SETNAME,
+              "{ type %s; flags timeout; }" % typ])
+        _run(["nft", "add", "chain", fam, TABLE, "input",
+              "{ type filter hook input priority -150; }"])
+        _run(["nft", "add", "rule", fam, TABLE, "input",
+              match + " saddr @" + SETNAME, "drop"])
 
     def setup(self, reset=False):
         """Make sure the enforcement point exists.
 
-        nft: create table/set/chain/rule. reset=False (what detectors use)
-        keeps an existing table and its entries so several detectors share one
-        blocklist and a restart doesn't wipe active blocks. reset=True
-        recreates it (CLI `setup`).
+        nft: create the IPv4 and IPv6 tables/sets/chains/rules. reset=False (what
+        detectors use) keeps an existing table and its entries so several
+        detectors share one blocklist and a restart doesn't wipe active blocks;
+        a missing table (e.g. the IPv6 one after an upgrade) is created.
+        reset=True recreates both (CLI `setup`).
         xdp: the program is attached by `checkhook.xdp load` (checkhook-xdp service);
         here we only check it is there (reset=True also empties the map).
         """
@@ -90,16 +120,9 @@ class Blocklist:
             if reset:
                 self.flush()
             return
-        if not reset and self.exists():
-            return
-        _run(["nft", "delete", "table", "ip", TABLE])  # clean slate
-        _run(["nft", "add", "table", "ip", TABLE])
-        _run(["nft", "add", "set", "ip", TABLE, SETNAME,
-              "{ type ipv4_addr; flags timeout; }"])
-        _run(["nft", "add", "chain", "ip", TABLE, "input",
-              "{ type filter hook input priority -150; }"])
-        _run(["nft", "add", "rule", "ip", TABLE, "input",
-              "ip saddr @" + SETNAME, "drop"])
+        for v in NFT:
+            if reset or not self._nft_has(v):
+                self._nft_create(v)
 
     # ------------------------------------------------------------- entries
     def add(self, ip, timeout=None):
@@ -110,12 +133,9 @@ class Blocklist:
         if self.backend == "xdp":
             secs = parse_timeout(to)
             expiry = time.monotonic_ns() + secs * 1_000_000_000 if secs else 0
-            r = _run(["bpftool", "map", "update", "pinned", _xdp_map(), "key"] + _key(ip)
-                     + ["value"] + _hexbytes(expiry.to_bytes(8, sys.byteorder)))
-            if r.returncode != 0:
-                raise RuntimeError(f"bpftool map update failed: {r.stderr.strip()}")
+            _xdp_put(ip, expiry)
             return
-        _run(["nft", "add", "element", "ip", TABLE, SETNAME,
+        _run(["nft", "add", "element", NFT[_version(ip)][0], TABLE, SETNAME,
               "{ %s timeout %s }" % (ip, to)])
 
     def remove(self, ip):
@@ -123,21 +143,24 @@ class Blocklist:
             self._win.remove(ip)
             return
         if self.backend == "xdp":
-            _run(["bpftool", "map", "delete", "pinned", _xdp_map(), "key"] + _key(ip))
+            m, key = _key(ip)
+            _run(["bpftool", "map", "delete", "pinned", m, "key"] + key)
             return
-        _run(["nft", "delete", "element", "ip", TABLE, SETNAME, "{ %s }" % ip])
+        _run(["nft", "delete", "element", NFT[_version(ip)][0], TABLE, SETNAME,
+              "{ %s }" % ip])
 
     def ips(self):
-        """Currently blocked IPv4 addresses (expired entries excluded)."""
+        """Currently blocked IPv4 and IPv6 addresses (expired entries excluded)."""
         if self.backend == "winfw":
             return [ip for ip, _ in self._win.entries()]
         if self.backend == "xdp":
             now = time.monotonic_ns()
             return sorted((ip for ip, exp in _xdp_entries() if exp == 0 or exp > now),
-                          key=ipaddress.ip_address)
-        text = self.list()
-        return sorted(set(re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", text)),
-                      key=ipaddress.ip_address)
+                          key=_sortkey)
+        out = set()
+        for v in NFT:
+            out.update(_nft_elements(v))
+        return sorted(out, key=_sortkey)
 
     def list(self):
         """Human-readable contents (empty string if absent)."""
@@ -151,13 +174,14 @@ class Blocklist:
                 return ""
             now = time.monotonic_ns()
             lines = []
-            for ip, exp in sorted(_xdp_entries(), key=lambda e: ipaddress.ip_address(e[0])):
+            for ip, exp in sorted(_xdp_entries(), key=lambda e: _sortkey(e[0])):
                 if exp == 0:
                     lines.append(f"{ip}  (no expiry)")
                 elif exp > now:
                     lines.append(f"{ip}  (expires in {(exp - now) // 1_000_000_000}s)")
             return "".join(l + "\n" for l in lines)
-        return _run(["nft", "list", "set", "ip", TABLE, SETNAME]).stdout
+        return "".join(_run(["nft", "list", "set", NFT[v][0], TABLE, SETNAME]).stdout
+                       for v in NFT)
 
     def flush(self):
         if self.backend == "winfw":
@@ -167,7 +191,8 @@ class Blocklist:
             for ip, _ in _xdp_entries():
                 self.remove(ip)
             return
-        _run(["nft", "flush", "set", "ip", TABLE, SETNAME])
+        for v in NFT:
+            _run(["nft", "flush", "set", NFT[v][0], TABLE, SETNAME])
 
     def reconcile(self):
         """Expire entries where the kernel can't (winfw). No-op elsewhere."""
@@ -180,13 +205,33 @@ class Blocklist:
         if self.backend == "xdp":
             raise SystemExit("XDP is detached by: sudo systemctl stop checkhook-xdp "
                              "(or: sudo python3 -m checkhook.xdp unload)")
-        _run(["nft", "delete", "table", "ip", TABLE])
+        for v in NFT:
+            _run(["nft", "delete", "table", NFT[v][0], TABLE])
+
+
+def _nft_elements(v):
+    """Addresses in the nft set of IP version v (the kernel drops expired ones)."""
+    r = _run(["nft", "-j", "list", "set", NFT[v][0], TABLE, SETNAME])
+    out = []
+    try:
+        items = json.loads(r.stdout or "{}").get("nftables", [])
+    except ValueError:
+        items = []
+    for it in items:
+        for e in (it.get("set") or {}).get("elem", []) or []:
+            val = e["elem"].get("val") if isinstance(e, dict) and "elem" in e else e
+            if isinstance(val, str):
+                try:
+                    out.append(str(ipaddress.ip_address(val)))
+                except ValueError:
+                    pass
+    return out
 
 
 # ---------------------------------------------------------------- xdp helpers
-def _xdp_map():
+def _xdp_map(v=4):
     from checkhook import xdp
-    return xdp.BLOCK_MAP
+    return xdp.BLOCK_MAP if v == 4 else xdp.BLOCK6_MAP
 
 
 def _hexbytes(b):
@@ -194,10 +239,33 @@ def _hexbytes(b):
 
 
 def _key(ip):
+    """(pinned map, key bytes) for an address: the IPv4 or the IPv6 map, key in
+    network byte order as in iphdr->saddr / ipv6hdr->saddr."""
     addr = ipaddress.ip_address(ip)
-    if addr.version != 4:
-        raise ValueError(f"XDP backend is IPv4-only: {ip}")
-    return _hexbytes(addr.packed)          # network byte order, as in iphdr->saddr
+    m = _xdp_map(addr.version)
+    if addr.version == 6:
+        import os
+        if not os.path.exists(m):
+            raise RuntimeError("the loaded XDP program has no IPv6 map (loaded before "
+                               "3.0.0rc33) — sudo systemctl restart checkhook-xdp")
+    return m, _hexbytes(addr.packed)
+
+
+def _xdp_put(ip, expiry_ns):
+    m, key = _key(ip)
+    r = _run(["bpftool", "map", "update", "pinned", m, "key"] + key
+             + ["value"] + _hexbytes(int(expiry_ns).to_bytes(8, sys.byteorder)))
+    if r.returncode != 0:
+        raise RuntimeError(f"bpftool map update failed: {r.stderr.strip()}")
+
+
+def _xdp_restore(entries):
+    """Put [(ip, expiry_ns)] back after a reload (same boot, so expiries still hold)."""
+    for ip, exp in entries:
+        try:
+            _xdp_put(ip, exp)
+        except (RuntimeError, ValueError):
+            pass
 
 
 def _bytes_of(v, n):
@@ -208,17 +276,40 @@ def _bytes_of(v, n):
 
 
 def _xdp_entries():
-    """[(ip, expiry_ns)] from the pinned map."""
-    r = _run(["bpftool", "-j", "map", "dump", "pinned", _xdp_map()])
-    if r.returncode != 0 or not r.stdout.strip():
-        return []
+    """[(ip, expiry_ns)] from the pinned IPv4 and IPv6 maps."""
+    import os
     out = []
-    for e in json.loads(r.stdout):
-        k = e["key"] if "key" in e else e["formatted"]["key"]
-        v = e["value"] if "value" in e else e["formatted"]["value"]
-        ip = str(ipaddress.IPv4Address(_bytes_of(k, 4)))
-        out.append((ip, int.from_bytes(_bytes_of(v, 8), sys.byteorder)))
+    for ver, size in ((4, 4), (6, 16)):
+        m = _xdp_map(ver)
+        if ver == 6 and not os.path.exists(m):
+            continue                           # program from before rc33
+        r = _run(["bpftool", "-j", "map", "dump", "pinned", m])
+        if r.returncode != 0 or not r.stdout.strip():
+            continue
+        for e in json.loads(r.stdout):
+            k = e["key"] if "key" in e else e["formatted"]["key"]
+            v = e["value"] if "value" in e else e["formatted"]["value"]
+            ip = str(ipaddress.ip_address(_raw_addr(k, size)))
+            out.append((ip, int.from_bytes(_bytes_of(v, 8), sys.byteorder)))
     return out
+
+
+def _raw_addr(k, size):
+    """Map key from bpftool JSON -> raw address bytes. Raw dumps give a list of
+    hex bytes; with BTF the IPv6 key (struct in6_addr) may come back formatted
+    as {"in6_u": {"u6_addr8": [..16 ints..], ...}}."""
+    if isinstance(k, dict):
+        u = k.get("in6_u", k)
+        for name in ("u6_addr8", "s6_addr"):
+            if name in u:
+                return bytes(int(x) & 0xff for x in u[name])
+        raise ValueError(f"unknown key format: {k!r}")
+    if isinstance(k, list):
+        return bytes(int(x, 16) if isinstance(x, str) else int(x) for x in k)
+    if size == 4:
+        # BTF-formatted __u32: host-order integer of the network-order bytes
+        return int(k).to_bytes(4, sys.byteorder)
+    raise ValueError(f"unknown key format: {k!r}")
 
 
 def _cli():

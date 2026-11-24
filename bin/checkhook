@@ -64,13 +64,19 @@ menu() {
     ${CYAN}train${RST}             train the ML detector              ${DIM}(ml.train)${RST}
     ${CYAN}eval${RST}              measure FPR + pick a threshold     ${DIM}(ml.eval)${RST}
     ${CYAN}bench${RST}             run the enforcement benchmark      ${DIM}(benchmark/)${RST}
+    ${CYAN}tune${RST}              fit the LLM model + flow-log size to this machine ${DIM}(--apply: root)${RST}
 
   ${BOLD}SERVICES${RST}  (systemd; settings in /etc/checkhook/checkhook.yaml)
+    ${CYAN}start${RST} / ${CYAN}stop${RST}       turn every CheckHook service on / off ${DIM}(root)${RST}
+    ${CYAN}net${RST}               current network + whether it enforces
+    ${CYAN}trust-here${RST}        enforce on THIS network, observe elsewhere ${DIM}(root)${RST}
+    ${CYAN}name-here${RST} NAME    name THIS network in the training data   ${DIM}(root)${RST}
     ${CYAN}services${RST}          status of checkhookd and the other units
     ${CYAN}config${RST}            print the effective config
     ${CYAN}logs${RST}              follow checkhookd and IDS logs (Ctrl+C to quit)
     ${CYAN}report${RST}            run LLM triage now and show the report ${DIM}(root)${RST}
     ${CYAN}pause${RST} / ${CYAN}resume${RST}    stop / restart training-data collection ${DIM}(attack practice; root)${RST}
+    ${CYAN}practice${RST} start|end  stop CheckHook fully for practice, then restart + check ${DIM}(root)${RST}
     ${CYAN}stats${RST}             collection and detection summary
     ${CYAN}gui${RST}               open the desktop app
     ${CYAN}demo${RST} on IFACE|off  presentation mode on an isolated lab interface ${DIM}(root)${RST}
@@ -110,6 +116,7 @@ case "$cmd" in
     done
     printf '  %-22s %s\n' "enforce" "$(python3 -m checkhook.service show 2>/dev/null | sed -n 's/^enforce: //p')"
     printf '  %-22s %s\n' "backend" "$(python3 -m checkhook.service show 2>/dev/null | sed -n 's/^backend: //p')"
+    python3 -m checkhook.ctl net 2>/dev/null | sed 's/^/  /'
     ;;
   config)                   exec python3 -m checkhook.service show "$@" ;;
   logs)                     exec journalctl -fu checkhookd -u checkhook-ids ;;
@@ -118,10 +125,20 @@ case "$cmd" in
     python3 -m checkhook.service triage && \
       cat "$(python3 -m checkhook.service show | sed -n '/^triage:/,/^[^ ]/s/^  out: //p')" ;;
   bench|benchmark)          exec bash benchmark/run_bench.sh "$@" ;;
+  tune)                     exec python3 -m checkhook.tune "$@" ;;
   pause|resume)             need_root; exec python3 -m checkhook.collect "$cmd" "$@" ;;
+  practice)                 need_root; exec python3 -m checkhook.ctl practice "$@" ;;
   stats)                    exec python3 -m checkhook.status "$@" ;;
   gui|app)                  exec python3 -m checkhook.gui "$@" ;;
   ctl)                      exec python3 -m checkhook.ctl "$@" ;;
+  net)                      exec python3 -m checkhook.ctl net "$@" ;;
+  trust-here)               need_root; exec python3 -m checkhook.ctl trust-here "$@" ;;
+  untrust-here)             need_root; exec python3 -m checkhook.ctl untrust-here "$@" ;;
+  name-here)                need_root; exec python3 -m checkhook.ctl name-here "$@" ;;
+  unname-here)              need_root; exec python3 -m checkhook.ctl unname-here "$@" ;;
+  start)                    need_root; exec python3 -m checkhook.ctl start "$@" ;;
+  stop)                     need_root; exec python3 -m checkhook.ctl stop "$@" ;;
+  restart)                  need_root; exec python3 -m checkhook.ctl restart "$@" ;;
   demo)                     need_root; exec python3 -m checkhook.demo "$@" ;;
   *)
     printf '%sunknown command:%s %s\n\n' "$RED" "$RST" "$cmd" >&2

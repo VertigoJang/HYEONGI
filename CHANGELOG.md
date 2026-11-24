@@ -3,6 +3,239 @@
 ## 3.0.0 (in testing)
 
 **Check: the LLM review now does what the name says**
+- rc41: the app and `checkhook stats` show whether the services run now, not what the
+  last status file said.
+  - Found on the test laptop: after "전체 중단" (or `checkhook stop`) the app kept showing
+    every service as running, and the power button stayed "전체 중단", so the app could
+    stop CheckHook but not start it again. checkhookd writes status.json itself; once it
+    stops, the file keeps its last "active" states.
+  - Linux: the app and `checkhook stats` ask systemd directly (`systemctl is-active`, no
+    root needed). Windows: the file is used while it is fresh; once it is older than a
+    minute the states are shown as unknown instead of repeated.
+  - While checkhookd is stopped the app says so ("전체 중단됨") and marks the numbers as
+    the last values from before the stop.
+- rc40: practice mode survives reboots, and DNS-spoof alerts no longer block on their own.
+  - Found during the first real use: the laptop rebooted twice during a 6-hour exercise
+    and the services, enabled at boot, came back (13:11-15:43 and 16:03-16:04): detection
+    and XDP ran for 2.5 hours although practice mode meant "everything off". Training
+    data stayed clean only because the pause flag is a file.
+  - `practice start` now also turns start-at-boot off for the units that had it (and
+    remembers which); `practice end` turns it back on, restarts checkhook-xdp (oneshot:
+    attach again) and checks that start-at-boot was restored. checkhookd started by
+    hand during practice mode waits until it ends; `checkhook start` refuses.
+  - `1:254` (PROTOCOL-DNS SPOOF, TTL of 1 min) joins the default `ids.review_rules`:
+    logged and reviewed, never a block on its own. The source of a spoofed DNS answer
+    is the resolver it imitates, so blocking it cuts off DNS rather than the attacker;
+    the one IDS would-block of the first day of the live model was 8.8.8.8 for this rule.
+    Installed configs keep their own list: add "1:254" there.
+  - `ml.make_dataset --rename-net OLD=NEW` reads a network tag under another name (rows
+    logged before the network was named); the logs are not changed.
+- rc39: practice mode, for attack practice from this host (the procedure first done by hand
+  for a Metasploitable2 web-attack exercise).
+  - `sudo checkhook practice start [--target IP ...] [memo]`: remembers whether
+    checkhook-capture was running, pauses collection (window in pauses.log), stops
+    checkhookd, checkhook-ids, checkhook-xdp (program detached) and checkhook-capture,
+    checks that they and the XDP pins are gone, and records the time and the newest
+    flow log.
+  - `sudo checkhook practice end`: starts the services again, resumes collection,
+    leaves checkhook-capture as it was, and checks: services up, XDP attached
+    (backend xdp), the newest flow log from before unchanged, no flow log written
+    during the practice, no flow row with a target address. Result in practice.log;
+    exit code 1 when a check fails.
+  - `sudo checkhook practice scrub IP` removes rows with that address from the flow
+    logs (not the one checkhookd is writing).
+  - The app has a "실습 모드 시작 / 종료" button next to "전체 중단": it asks for a memo
+    and optional target IPs, shows the check results at the end, and while practice
+    mode is on it says so (instead of "checkhookd may have stopped") and disables the
+    power button. The practice state is read from its own file, so the app shows it
+    even when the status file is stale or missing.
+- rc38: the last two would-block entries in the test laptop's whole history are explained
+  and fixed, and the evaluation tools judge only flows a detector acts on.
+  - `1:451` (PROTOCOL-ICMP Timestamp Reply) joins the default `ids.ignore_rules`, next to
+    1:408 (Echo Reply). Both would-blocks (11-16 23:39, 11-17 11:24) were this host's own
+    server answering the ICMP timestamp probe that nmap sends during host discovery,
+    while this host scanned that server. A timestamp *request* arriving (recon of this
+    host) still counts. Installed configs keep their own list: add "1:451" there.
+  - `ml.eval`: with a `dir` column, the FPR table and the threshold recommendation use
+    only flows not started by this host, and it says how many outbound benign flows it
+    left out; `--by-dir` still shows all directions. Before, this host's own scans in
+    the benign set made it report that no threshold could reach 1 %.
+  - `ml.fp_report`: the headline adds the false-positive rate on flows a detector could
+    act on, with a rule-of-three bound when it is 0; the flow-size comparison and the
+    "small flow = attack" verdict use those flows, and outbound false positives are
+    listed apart. When every false positive was started by this host it says so
+    instead of diagnosing a bias.
+- rc37: flow direction. The flow logs gain `dir`: "in" when another host started the
+  flow, "out" when this host did (netinfo.Direction, from this host's own addresses).
+  Found while tracing the 9.74% false-positive rate of the model-v3 experiment: 3,983 of
+  its 3,985 false positives were this host's own nmap scans (top 1,000 ports, four
+  runs) of its own server, labelled benign because the whole flow log was taken as
+  benign. An unanswered outbound SYN is feature-identical to a scan probe against a
+  silent host, so the model flagged it, and a model trained on such rows as benign
+  misses those probes. The live detectors never act on flows this host started (the
+  source is a local address), so those rows were neither real false positives nor
+  useful benign examples.
+  - `ml.make_dataset --dir in|out` keeps one direction; older logs and PCAPs get the
+    direction inferred per file (this host's addresses are the ones present in most
+    flows, found greedily: one IPv4 address per network plus IPv6 addresses), and the
+    addresses it settled on are printed. Output counts flows per direction.
+  - `ml.eval --by-dir` and `ml.fp_report` (part 1c) split false positives into inbound
+    (could lead to a block) and outbound (never blocked).
+  - Training and evaluation data for the detector should be inbound benign flows plus
+    attacks: `--label 0 --dir in`. Evaluate by time (older log files for training,
+    newer for evaluation); a random split of flows put 42.5 % of evaluation rows
+    verbatim into training on the test laptop.
+- rc36: fit to the machine, and see where false positives come from.
+  - `checkhook tune` shows RAM, CPU threads, the GPU share of the last review and the
+    free disk, and the LLM model / fallback / num_ctx / timeout and flow-log size that
+    fit them; `sudo checkhook tune --apply` writes them (comments kept) and restarts.
+    Tiers by RAM (Ollama on an integrated GPU shares system memory): >= 14 GB
+    qwen2.5:7b + 3b, >= 7 GB qwen2.5:3b + 1.5b, below that qwen2.5:1.5b with num_ctx
+    2048; one tier lower and a 600 s timeout when the last review ran mostly on the
+    CPU. Flow logs get 10 % of the free disk, 0.5–4 GB. Missing models are named with
+    the `ollama pull` command. The same keys may be set to `auto` and are then resolved
+    each time the config is loaded.
+  - `python3 -m ml.fp_report --model M --data held-out.csv [--data attack.csv]`: false
+    positives at the operating threshold by service (protocol/port) and by network,
+    flow size (packets, bytes, duration) of true negatives vs false positives vs true
+    positives, the share of flows with <= 3 packets in each, and the features the
+    forest relies on. It says so when false positives are small flows like the attacks
+    and unlike other benign flows (the "small flow = attack" bias seen in the v3
+    experiments).
+  - `ml.make_dataset` keeps `dst_port` and `protocol` for that report.
+- rc35: two problems found by attacking CheckHook from the netns lab (IPv4 and IPv6).
+  - Fixed (from rc33): an IPv6 attacker on the same /64 as this host was never flagged.
+    rc33 counted every address in this host's on-link IPv6 networks as local, to cover
+    temporary addresses; in the lab (fd99:199::/64 on both ends) Snort raised 6 alerts
+    for fd99:199::2 and the bridge skipped them all, while 10.199.0.2 was flagged. Now
+    an address in an on-link /64 that is not in the cached set triggers an immediate
+    re-read of this host's addresses (at most every 2 s): a new temporary address of
+    this host is still local, a neighbour is not. Neighbours are treated like RFC1918
+    neighbours: not blocked by default, blocked with `block_private` (demo mode).
+    `checkhook ctl block` may block such a neighbour (a person's decision).
+  - The LLM review answered a Korean report with Chinese reasons (qwen2.5:7b). The
+    prompt now states the language in that language as well, and an answer that still
+    contains Chinese characters is asked again once; the report says when that
+    happened, or that the reasons are still partly Chinese.
+- rc34: every logged flow says which network it came from. The flow logs gain a `net`
+  column, so training data from home, a campus Wi-Fi or a cafe can be told apart,
+  filtered and evaluated separately (FPR found in the v3 experiments may come from one
+  network rather than the model everywhere).
+  - The tag is the name given with `sudo checkhook name-here <name>` (e.g. home,
+    school), stored per default-gateway MAC in `networks.names`; `unname-here` drops
+    it. An unnamed network gets `gw-` + 8 hex of a salted hash of the gateway MAC;
+    no gateway (offline) or no MAC (Windows) gives `unknown`. The salt is random per
+    host (`/var/lib/checkhook/net-salt`) and never written to the flow logs: a bare
+    hash of a MAC is reversible in seconds (the first half is a vendor prefix), a
+    salted one is not, so a shared CSV says "same network as that row", not which.
+  - The tag is re-read every 30 s and set when a flow ends; checkhookd logs each
+    change ("flow logging: network tag ..."). `checkhook net` shows the tag here.
+  - `ml.make_dataset` keeps the column and adds `--net` / `--exclude-net` (keep or
+    drop networks) and `--set-net` (tag rows that have none: PCAPs, logs before
+    rc34, which become `unknown` otherwise); it prints the flow count per network.
+  - `ml.eval --by-net [--threshold 0.90]` adds FPR and TPR per network.
+  - Editing `networks:` (trust-here, name-here) now rewrites both keys together;
+    before, trust-here wrote only `trusted_gateways`.
+  - Earlier flow logs cannot be tagged after the fact: they mix networks and carry
+    no gateway information.
+- rc33: IPv6 sources are blocked. Before, every detector skipped IPv6 sources on
+  purpose (the blocklist was IPv4-only), so an attacker reaching this host over IPv6 was
+  detected but never blocked.
+  - XDP: a second pinned map `checkhook_block6` (16-byte source address, same expiry
+    value) next to `checkhook_block`; the program checks IPv6 packets against it.
+    Loaded and run through the kernel verifier and `BPF_PROG_TEST_RUN` on 6.18:
+    listed v6 source dropped, other v6 passed, expired entry passed and deleted,
+    truncated v6 header passed, IPv4 unchanged. A program attached before rc33 has no
+    IPv6 map: `checkhook xdp` says so, IPv6 blocks fail with a log line instead of
+    stopping the detector, and `sudo systemctl restart checkhook-xdp` attaches the
+    new one (`checkhook.xdp load` over an old program reloads it and keeps the IPv4
+    entries).
+  - nftables: a second isolated table `ip6 checkhook` (same set/chain/priority -150).
+    Detectors create it when it is missing, without touching the IPv4 table, so an
+    upgrade keeps active IPv4 blocks. `ips()` reads both sets through `nft -j`.
+  - Windows firewall rules accept IPv6 addresses too (not yet tested on Windows).
+  - Never blocked, as with IPv4: loopback, link-local (fe80::/10), multicast,
+    unspecified, IPv4-mapped (::ffff:0:0/96), site-local; unique-local fc00::/7 is
+    treated like RFC1918 (blocked only with `block_private`).
+  - Local infrastructure (`protect_local`) now includes this host's IPv6 addresses
+    and IPv6 DNS servers, and any address inside this host's on-link IPv6 networks
+    (/64): IPv6 hosts make new temporary addresses on their own (RFC 8981), so an
+    exact-address list would lag behind by up to a minute. Other hosts in the same
+    /64 are therefore not blocked either, as RFC1918 neighbours are not by default.
+  - Addresses are compared in canonical form (Snort, Suricata, nfstream, `skip:`
+    and `checkhook ctl block` may spell the same IPv6 address differently).
+  - `checkhook ctl block/unblock/skip-add` accept IPv6. The LLM review is told the
+    on-link IPv6 networks.
+  - Limit: an IPv6 entry is one address (/128). An attacker that rotates addresses
+    inside its own /64 needs one entry per address; prefix blocking is not done yet.
+  - `lab-netns.sh up` also gives the lab IPv6 addresses (fd99:199::1 host side,
+    ::2 attacker) when the host has IPv6, and `mode drop|reject` now applies to
+    both families (table `inet cklab`, `reject with icmpx`; same ICMP answer for
+    IPv4 as before). The self-test adds and removes 2001:db8::250 as well.
+- rc32: `lab-netns.sh mode rst|drop|reject` sets how the victim (ck-host) answers an
+  attack, in an isolated nft table `ip cklab` that only matches traffic arriving on
+  ck-host. rst = host default (closed TCP->RST, closed UDP->ICMP unreachable, like Kali);
+  drop = silent (firewalld/Windows); reject = ICMP admin-prohibited (a REJECT firewall).
+  Snort sniffs the link before netfilter, so it still sees every attack packet — only the
+  answer changes. This is the environment switch for collecting ML training data across
+  response modes (model v3), all inside the isolated netns, independent of the real
+  network. `down` and `mode rst` clear the table; `status` shows the current mode.
+- rc31: `checkhook net` (read-only) no longer needs root; only the commands that
+  change state (trust-here, untrust-here, block, enforce, ...) still do.
+- rc30: per-network enforcement. CheckHook now decides whether to actually block
+  by the current network's default-gateway MAC. `checkhook ctl trust-here` adds the
+  network you are on (home) to `networks.trusted_gateways`; from then on every other
+  network (school, cafe) is observe-only -- detection and the report run as usual, but
+  nothing is added to the kernel blocklist, so an unfamiliar network's quirks or a
+  stray practice packet can never cause a block you did not intend. Re-read every 30 s,
+  so moving between networks switches mode on its own. Opt-in: an empty trusted list
+  leaves blocking to `enforce:` everywhere (unchanged). Gated in both the IDS and ML
+  block paths. `checkhook net` shows the current network and whether it enforces;
+  `checkhook services` shows it too; `checkhook ctl untrust-here` removes a network.
+- rc29: a master on/off switch for the whole stack. `checkhook start` / `checkhook stop`
+  (root) start or stop every service at once (checkhookd, ids, xdp, capture); the desktop
+  app gets a "전체 가동 / 전체 중단" button next to the service list. Stopping halts
+  detection and new blocks but leaves the kernel blocklist as it is — IPs already blocked
+  stay blocked until block_timeout or `checkhook flush` (option 1). `checkhook ctl start|stop`
+  is the privileged path the app calls through pkexec.
+- rc28: the LLM verdict table marks IPs whose only block-capable alerts are review-only
+  rules (UDP port scans, payload rules on plain ports) as "(차단 안 됨) / (not blocked)".
+  The model can still call such an IP an attack -- in the eval all models wrongly called a
+  P2P peer (one UDP port-scan alert + many ICMP-unreachable, i.e. this host's own outbound
+  UDP) an attack -- but the rule layer does not block it, and now the person reading the
+  report sees that, so a wrong LLM verdict cannot mislead them into unblocking a real one.
+  The rc27 prompt wording that tried to teach the model this case is reverted: it had no
+  effect (both 3b and 7b still called the peer an attack), confirming the fix belongs in the
+  rule layer, not the prompt. The default review model stays qwen2.5:7b.
+- rc27: the review falls back to a lighter model. If the main model (`triage.model`,
+  default qwen2.5:7b) fails or runs mostly on the CPU (GPU share < 0.5 from /api/ps),
+  the request is retried once on `triage.fallback_model` (default qwen2.5:3b); the
+  report and log name the model that answered and why it fell back. On a 16 GB laptop
+  the eval (triage_eval) ranked qwen2.5:7b clearly above 3b/1.5b: 7b caught every
+  attack and never called one a false positive, while the small models called obvious
+  lab attacks (SYN flood + port scan + ML p=1.00) false positives. So the default stays
+  7b, with 3b only as a degraded fallback. The prompt now says a UDP port-scan alert
+  paired with many ICMP-unreachable (1:402) from one source is this host's own outbound
+  UDP, not a scan of it (all three models had wrongly called such a peer an attack).
+  Every LLM section carries a one-line caveat: advisory only, blocking is decided by the
+  rules and ML, and an LLM can invent its reasons.
+- rc26: `python3 -m checkhook.triage_eval --models a,b,c --repeat 3` scores models on
+  the review with 10 cases whose answer is known (4 attacks from the lab and an
+  internet scan, 6 false positives seen on the laptop: CDN payload matches, a package
+  mirror, a QUIC server, a P2P peer, an HTTP 403, a DNS server), three prompts of four
+  IPs built by the real prompt code. It reports correct verdicts, attacks caught,
+  attacks called false positive, "unclear", invalid JSON, verdicts that change between
+  runs, and time. Read-only; meant to pick the model per hardware class.
+- rc25: the review is tuned for a GPU Ollama shared with another project on the laptop
+  (one model loaded at a time, OLLAMA_MAX_LOADED_MODELS=1). Each request sends
+  `keep_alive` (default 5m) and `num_ctx` (4096); the timeout is 300 s instead of 180
+  (a request can queue behind another client's, then cold-load: one measured run took
+  190 s); a refused connection or 5xx is retried once after 10 s. The report and the
+  log record where and how fast the review ran: GPU share from `/api/ps`, load/prompt/
+  generate seconds, tokens against the context, with a warning when part ran on the CPU
+  or the prompt filled the context. New `triage:` keys `timeout`, `num_ctx`,
+  `keep_alive`, `retries`; the default host is 127.0.0.1. `checkhookd.service` no longer
+  orders after the system `ollama.service` (Ollama now runs as a user service).
 - Reviews the IPs that were blocked, or with `enforce: false` would have been
   blocked; before, dry-run left nothing to review.
 - Compares flagged IPs with this host's DNS servers, default gateway and own
@@ -32,6 +265,34 @@
   crosses a rotation is counted whole.
 
 **IDS capture length**
+- rc24: `1:1201` (a web server answering HTTP 403 Forbidden) joins `review_rules`. It
+  made two CDN servers (Fastly and another) would-block IPs on the laptop: a refused
+  request of this host, not an attack on it. Checked on Kali after rc20: Snort runs with
+  `-s 65535`, and since that restart 116:6 / 116:275 / 137:2 are 0 while other rules
+  (1:254, 129:15, port_scan, the lab rules) keep alerting.
+- rc23: Snort UDP port-scan alerts (122:17, 18, 20, 21, 22, 24) are review-only
+  (`ids.review_rules`), like payload rules on plain ports. Replaying a week of laptop
+  alerts, all ten external would-block IPs were UDP port scans: nine were peers in
+  ISP networks whose alerts were otherwise ICMP port unreachable (1:402), i.e. answers
+  to this host's own UDP; one was a server on UDP 443 (QUIC). TCP port scans still block.
+  The triage prompt explains both cases.
+- rc22: payload signatures (`INDICATOR-SHELLCODE*`, `SHELLCODE*`) on plain ports are
+  review-only: logged as `[review]`, counted on the status board and shown to the
+  triage, but they never block by themselves. On the laptop all six would-block IPs of
+  one day other than the lab attacker came from such rules on CDN and package servers
+  (CloudFront, Fastly, Cloudflare, Google, Canonical port 80 during a container build).
+  Other alerts from the same IP still block as before. The triage prompt marks such IPs
+  "[review only]" and explains why plain-HTTP downloads match these rules.
+  `ids.payload_block: true` restores the old behaviour.
+- rc21: fewer false alarms that cannot be acted on.
+  `1:396` and `1:449` (ICMP unreachable / TTL exceeded replies) join the default
+  `ignore_rules`. Payload rules (`INDICATOR-SHELLCODE*`, `SHELLCODE*`) are ignored only
+  when either port is a TLS port (`encrypted_ports`): there the matched bytes are
+  ciphertext from a CDN, not shellcode. The same rule on port 80 still counts.
+  Alerts are parsed with `sport` as well as `dport`. Alerts whose source is this host
+  are dropped (as before, through the local-address set); devices that reach you on
+  purpose, such as a tablet using VNC, belong in `skip`. The netns guide now says
+  `nmap -n`.
 - rc20: Snort runs with `-s 65535`. With GRO on (the default for most NICs and
   wifi drivers), the kernel hands Snort merged packets far larger than its
   default 1518-byte snaplen. Snort cut them and raised 116:6 "IPv4 datagram

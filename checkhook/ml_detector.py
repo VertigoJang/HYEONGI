@@ -12,7 +12,7 @@ import argparse
 
 from checkhook.blocklist import Blocklist
 from checkhook.features import FEATURES
-from checkhook.policy import should_skip  # noqa: F401  (kept importable from here)
+from checkhook.policy import norm_ip, should_skip  # noqa: F401  (kept importable from here)
 
 
 def attack_proba(clf, flow):
@@ -53,7 +53,7 @@ class AlertWriter:
 
 def run(iface, clf=None, bl=None, threshold=0.9, block_private=False,
         idle=15, active=120, log=print, on_flow=None, stop=None,
-        skip=(), local=None, refresh=3600, on_event=None, alerts=None, clock=None):
+        skip=(), local=None, refresh=3600, on_event=None, alerts=None, clock=None, policy=None):
     """Classify live flows on `iface`.
 
     clf: trained classifier, or None to only observe flows (e.g. for logging).
@@ -70,7 +70,7 @@ def run(iface, clf=None, bl=None, threshold=0.9, block_private=False,
     import time
     from nfstream import NFStreamer
     clock = clock or time.monotonic
-    seen = {}; skip = set(skip)
+    seen = {}; skip = {norm_ip(str(x)) for x in skip}
     ev = on_event or (lambda a, act: None)
     what = f"classifying (threshold {threshold})" if clf is not None else "observing"
     log(f"[*] {what} live flows on {iface}")
@@ -85,7 +85,7 @@ def run(iface, clf=None, bl=None, threshold=0.9, block_private=False,
         p = attack_proba(clf, flow)
         if p < threshold:
             continue
-        src = flow.src_ip
+        src = norm_ip(flow.src_ip)
         al = {"src": src, "gid": ML_GID, "sid": 1, "ids": "ml",
               "msg": f"CHECKHOOK-ML attack-like flow p={p:.2f} -> {flow.dst_ip}:{flow.dst_port}"}
         if alerts is not None:
@@ -96,11 +96,16 @@ def run(iface, clf=None, bl=None, threshold=0.9, block_private=False,
         if src in skip or should_skip(src, block_private) or (local is not None and src in local):
             ev(al, "skip"); continue
         seen[src] = now
-        tag = "[BLOCK]" if bl is not None else "[would-block]"
-        if bl is not None:
-            bl.add(src)
-        ev(al, "blocked" if bl is not None else "would-block")
-        log(f"{tag} {src}  (ml p={p:.2f} -> {flow.dst_ip}:{flow.dst_port})")
+        block = bl is not None and (policy is None or policy.allowed())
+        extra = "  (observe-only on this network)" if (bl is not None and not block) else ""
+        if block:
+            try:
+                bl.add(src)
+            except (RuntimeError, ValueError) as e:
+                block, extra = False, f"  (block failed: {e})"
+        tag = "[BLOCK]" if block else "[would-block]"
+        ev(al, "blocked" if block else "would-block")
+        log(f"{tag} {src}  (ml p={p:.2f} -> {flow.dst_ip}:{flow.dst_port}){extra}")
 
 
 def main():

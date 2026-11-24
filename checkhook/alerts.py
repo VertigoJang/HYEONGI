@@ -12,6 +12,8 @@ import json
 import os
 import re
 
+from checkhook.policy import norm_ip
+
 
 def parse_alert(line):
     """Return {"src", "gid", "sid", "msg", "ids", ...} for an alert line, else None.
@@ -35,43 +37,102 @@ def parse_alert(line):
         if ev.get("event_type") != "alert":
             return None
         al = ev.get("alert") or {}
-        return {"src": ev.get("src_ip"), "gid": _int(al.get("gid"), 1),
+        return {"src": norm_ip(ev.get("src_ip")), "gid": _int(al.get("gid"), 1),
                 "sid": al.get("signature_id"), "msg": al.get("signature", ""),
                 "ids": "suricata", "dport": _int(ev.get("dest_port"), None),
+                "sport": _int(ev.get("src_port"), None),
                 "score": None, "ts": ev.get("timestamp")}
     if "src_addr" in ev or "sid" in ev:          # Snort 3 alert_json
         gid = _int(ev.get("gid"), 1)
         dport = ev.get("dst_port")
         if dport is None and isinstance(ev.get("dst_ap"), str) and ":" in ev["dst_ap"]:
             dport = ev["dst_ap"].rsplit(":", 1)[1]          # Snort's "addr:port" field
-        return {"src": ev.get("src_addr"), "gid": gid, "sid": ev.get("sid"),
+        sport = ev.get("src_port")
+        if sport is None and isinstance(ev.get("src_ap"), str) and ":" in ev["src_ap"]:
+            sport = ev["src_ap"].rsplit(":", 1)[1]
+        return {"src": norm_ip(ev.get("src_addr")), "gid": gid, "sid": ev.get("sid"),
                 "msg": ev.get("msg", ""), "ids": "ml" if gid == 9000 else "snort",
-                "dport": _int(dport, None), "score": ev.get("score"),
+                "dport": _int(dport, None), "sport": _int(sport, None),
+                "score": ev.get("score"),
                 "ts": ev.get("timestamp")}
     return None
 
 
+# Ports whose payload is encrypted (TLS and friends). A content signature that
+# matches there matched ciphertext by chance: e.g. INDICATOR-SHELLCODE
+# "x86 setuid 0" on downloads from CDNs over 443.
+ENCRYPTED_PORTS = (443, 465, 563, 636, 853, 989, 990, 992, 993, 994, 995, 5061, 8443)
+PAYLOAD_PREFIXES = ("INDICATOR-SHELLCODE", "SHELLCODE")
+# Snort port_scan UDP variants (portscan, decoy, distributed; plain and filtered).
+# On a client they come from its own UDP: P2P peers answering with ICMP port
+# unreachable, QUIC servers. Shown and reviewed, never a block on their own.
+REVIEW_RULES = ("122:17", "122:18", "122:20", "122:21", "122:22", "122:24",
+                "1:1201")   # HTTP 403 Forbidden sent back by a server this host asked
+
+
 class Ignore:
     """Which alerts never lead to a block: whole generators (Snort gid, e.g. the
-    packet decoder) and single rules written "gid:sid" (Suricata rules are gid 1)."""
+    packet decoder), single rules written "gid:sid" (Suricata rules are gid 1),
+    and payload signatures (msg starting with one of `payload_prefixes`) when
+    either port is an encrypted-traffic port.
 
-    def __init__(self, gids=(), rules=()):
+    On other ports a payload signature is real evidence but weak: plain-HTTP
+    downloads (apt, container images) match "setuid 0" or "inc ebx NOOP" by
+    chance. Unless `payload_block` is set, such an alert is review-only
+    (`review_only()`): it never blocks by itself, the triage still sees it."""
+
+    def __init__(self, gids=(), rules=(), encrypted_ports=ENCRYPTED_PORTS,
+                 payload_prefixes=PAYLOAD_PREFIXES, payload_block=False,
+                 review_rules=REVIEW_RULES):
+        self.payload_block = bool(payload_block)
+        self.review = set()
+        for r in review_rules or ():
+            g, _, x = str(r).partition(":")
+            self.review.add((int(g), int(x)) if x else (1, int(g)))
         self.gids = {int(g) for g in gids}
         self.rules = set()
         for r in rules:
             g, _, s = str(r).partition(":")
             self.rules.add((int(g), int(s)) if s else (1, int(g)))
+        self.enc = {int(p) for p in (encrypted_ports or ())}
+        self.prefixes = tuple(str(x) for x in (payload_prefixes or ()))
+
+    def payload_on_encrypted(self, al):
+        if not self.prefixes or not self.enc:
+            return False
+        if not str(al.get("msg", "")).startswith(self.prefixes):
+            return False
+        return al.get("sport") in self.enc or al.get("dport") in self.enc
+
+    def is_payload(self, al):
+        return bool(self.prefixes) and str(al.get("msg", "")).startswith(self.prefixes)
+
+    def review_only(self, al):
+        """Evidence for review, not a block: a payload signature on a plain port,
+        or a rule in `review_rules` (UDP port scans by default)."""
+        if self(al):
+            return False
+        if (al.get("gid", 1), _int(al.get("sid"), -1)) in self.review:
+            return True
+        return not self.payload_block and self.is_payload(al)
 
     def __call__(self, al):
         gid = al.get("gid", 1)
-        return gid in self.gids or (gid, _int(al.get("sid"), -1)) in self.rules
+        return (gid in self.gids or (gid, _int(al.get("sid"), -1)) in self.rules
+                or self.payload_on_encrypted(al))
 
     def __bool__(self):
-        return bool(self.gids or self.rules)
+        return bool(self.gids or self.rules or self.prefixes or self.review)
 
     def __str__(self):
         parts = [f"gid {g}" for g in sorted(self.gids)]
         parts += [f"{g}:{s}" for g, s in sorted(self.rules)]
+        if self.enc and self.prefixes:
+            parts.append(f"{'/'.join(self.prefixes)} on ports {','.join(map(str, sorted(self.enc)))}")
+        if self.prefixes and not self.payload_block:
+            parts.append(f"{'/'.join(self.prefixes)} elsewhere: review only")
+        if self.review:
+            parts.append("review only: " + ", ".join(f"{g}:{x}" for g, x in sorted(self.review)))
         return ", ".join(parts)
 
 

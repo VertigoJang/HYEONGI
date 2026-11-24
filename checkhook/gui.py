@@ -55,7 +55,8 @@ QTextBrowser {{ background: {PANEL}; border: 1px solid {LINE}; border-radius: 8p
 ACTION = {"blocked": ("차단", RED), "would-block": ("차단 예정", AMBER), "skip": ("예외", DIM),
           "ignored": ("무시 규칙", DIM), "recent": ("이미 처리", DIM)}
 STATE = {"active": ("실행 중", GREEN), "inactive": ("멈춤", AMBER), "failed": ("실패", RED),
-         "missing": ("설치 안 됨", DIM), "activating": ("시작 중", AMBER)}
+         "missing": ("설치 안 됨", DIM), "activating": ("시작 중", AMBER),
+         "deactivating": ("멈추는 중", AMBER), "unknown": ("알 수 없음", DIM)}
 
 
 def hhmm(t):
@@ -156,8 +157,16 @@ class App(QMainWindow):
         t = QLabel("서비스"); t.setObjectName("cardTitle"); sl.addWidget(t)
         self.svc_rows = QLabel(""); self.svc_rows.setTextFormat(Qt.RichText)
         self.svc_rows.setStyleSheet("background:transparent"); sl.addWidget(self.svc_rows)
+        brow = QHBoxLayout()
+        self.b_power = QPushButton("전체 중단")
+        self.b_power.clicked.connect(self.toggle_power)
         b = QPushButton("checkhookd 다시 시작"); b.clicked.connect(lambda: self.ctl(["restart"]))
-        b.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed); sl.addWidget(b)
+        self.b_practice = QPushButton("실습 모드 시작")
+        self.b_practice.clicked.connect(self.toggle_practice)
+        self.l_practice = QLabel(""); self.l_practice.setStyleSheet("background:transparent")
+        for x in (self.b_practice, self.b_power, b):
+            x.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed); brow.addWidget(x)
+        brow.addStretch(1); sl.addLayout(brow); sl.addWidget(self.l_practice)
         g.addWidget(svc, 2, 0, 1, 3)
         g.setRowStretch(3, 1)
         return w
@@ -191,11 +200,45 @@ class App(QMainWindow):
         return w
 
     # ---------------------------------------------------------- refresh -----
+    def _practice_ui(self):
+        """Practice mode is read from its own state file: while it is on, checkhookd
+        is stopped and the status file is stale or missing."""
+        from checkhook.practice import state as practice_state
+        ps = practice_state()
+        self.b_practice.setText("실습 모드 종료 (재가동 + 점검)" if ps else "실습 모드 시작")
+        self.b_practice.setObjectName("danger" if ps else "")
+        self.b_practice.style().unpolish(self.b_practice); self.b_practice.style().polish(self.b_practice)
+        self.b_power.setEnabled(not ps)
+        self.l_practice.setText(
+            f"실습 모드: {ps['start']}부터 CheckHook 전체 중단 중 ({ps.get('memo') or '메모 없음'}"
+            + (f", 대상 {', '.join(ps['targets'])}" if ps.get("targets") else "") + "). "
+            "학습 데이터 수집도 멈춰 있고, 위 카드의 수치는 중단 전 마지막 값입니다." if ps else "")
+        return ps
+
+    def _services_ui(self, svc):
+        """Service rows and the power button, from the states as they are now
+        (status.live_services), not from the last status file. Returns whether
+        checkhookd is running."""
+        rows = []
+        for name, st in svc.items():
+            label, col = STATE.get(st, (st, DIM))
+            rows.append(f"<span style='color:{col}'>●</span>&nbsp; {name} "
+                        f"<span style='color:{DIM}'>— {label}</span>")
+        self.svc_rows.setText("<br>".join(rows) or "-")
+        running = svc.get("checkhookd") == "active"
+        self.b_power.setText("전체 중단" if running else "전체 가동")
+        self.b_power.setObjectName("" if running else "danger")
+        self.b_power.style().unpolish(self.b_power); self.b_power.style().polish(self.b_power)
+        return running
+
     def refresh(self):
+        ps = self._practice_ui()
         try:
             s = status.read()
         except FileNotFoundError:
-            self._warn(f"상태 파일({status.PATH})이 없습니다. checkhookd가 실행 중인지 확인하세요."
+            self._services_ui(status.live_services())
+            self._warn("실습 모드라 CheckHook이 멈춰 있습니다." if ps else
+                       f"상태 파일({status.PATH})이 없습니다. checkhookd가 실행 중인지 확인하세요."
                        + ("" if WINDOWS else "  →  systemctl status checkhookd"))
             return
         except Exception as e:
@@ -203,12 +246,20 @@ class App(QMainWindow):
             return
         self.s = s
         age = time.time() - s["written"]
-        self._warn("" if age < 60 else
+        running = self._services_ui(status.live_services(s))
+        self._warn("실습 모드라 CheckHook이 멈춰 있습니다. 끝나면 '실습 모드 종료'를 누르세요." if ps else
+                   "CheckHook이 멈춰 있습니다 (checkhookd 중단). 아래 수치와 목록은 멈추기 전 마지막 "
+                   "값입니다. 다시 켜려면 '전체 가동'을 누르세요." if not running else
+                   "" if age < 60 else
                    f"상태가 {int(age // 60)}분 동안 갱신되지 않았습니다. checkhookd가 멈췄을 수 있습니다.")
         self.version.setText(f"v{s['version']}")
         self.updated.setText("갱신 " + datetime.datetime.fromtimestamp(s["written"]).strftime("%H:%M:%S"))
 
-        if s.get("demo"):
+        if ps:
+            text, color = "실습 모드 · 전체 중단", AMBER
+        elif not running:
+            text, color = "전체 중단됨", AMBER
+        elif s.get("demo"):
             text, color = ("시연 모드 · 차단 켜짐" if s["enforce"] else "시연 모드 · 기록만 함"), AMBER
         elif s["paused"]:
             text, color = "학습 데이터 수집 일시정지", AMBER
@@ -252,13 +303,6 @@ class App(QMainWindow):
         rep = s.get("report")
         self.c_report.value.setText(hhmm(rep["mtime"]) if rep else "없음")
         self.c_report.note.setText("한 시간마다 자동 실행")
-
-        rows = []
-        for name, st in s.get("services", {}).items():
-            label, col = STATE.get(st, (st, DIM))
-            rows.append(f"<span style='color:{col}'>●</span>&nbsp; {name} "
-                        f"<span style='color:{DIM}'>— {label}</span>")
-        self.svc_rows.setText("<br>".join(rows) or "-")
 
         # tables
         flagged = s.get("flagged", [])
@@ -337,6 +381,39 @@ class App(QMainWindow):
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes:
             self.ctl(["enforce", "on"], "차단 켜는 중…")
 
+    def toggle_power(self):
+        running = self.b_power.text() == "전체 중단"
+        if running:
+            r = QMessageBox.question(self, "CheckHook",
+                                     "CheckHook을 전체 중단할까요?\n탐지와 차단이 멈춥니다. "
+                                     "이미 차단된 IP는 그대로 유지됩니다.")
+            if r != QMessageBox.Yes:
+                return
+            self.ctl(["stop"], "중단 중…")
+        else:
+            self.ctl(["start"], "가동 중…")
+
+    def toggle_practice(self):
+        from checkhook.practice import state as practice_state
+        if practice_state():
+            self.ctl(["practice", "end"], "재가동하고 학습 데이터를 점검하는 중…")
+            return
+        memo, ok = QInputDialog.getText(
+            self, "실습 모드", "CheckHook을 완전히 멈춥니다 (탐지·차단·학습 데이터 수집 모두).\n"
+            "실습이 끝나면 같은 버튼으로 재가동하고 학습 데이터가 깨끗한지 점검합니다.\n\n"
+            "메모 (예: HW6 meta2 웹 공격):")
+        if not ok:
+            return
+        target, ok = QInputDialog.getText(
+            self, "실습 모드", "공격 대상 IP (선택, 쉼표로 여러 개):\n"
+            "종료할 때 이 주소가 학습 데이터에 들어갔는지 확인합니다.")
+        if not ok:
+            return
+        args = ["practice", "start"]
+        for t in [x.strip() for x in target.replace(" ", ",").split(",") if x.strip()]:
+            args += ["--target", t]
+        self.ctl(args + memo.split()[:8], "CheckHook을 멈추는 중…")
+
     def toggle_pause(self):
         if not self.s:
             return
@@ -371,7 +448,11 @@ class App(QMainWindow):
     def _done(self, code, args):
         out = bytes(self.proc.readAll()).decode("utf-8", "replace").strip()
         self.proc = None
-        if code == 0:
+        if args[:2] == ["practice", "end"] and code in (0, 1):
+            self.msg.setText("실습 모드 종료: " + ("학습 데이터 깨끗함" if code == 0 else "점검 실패 항목 있음"))
+            (QMessageBox.information if code == 0 else QMessageBox.warning)(
+                self, "실습 모드 종료", out[-2500:])
+        elif code == 0:
             self.msg.setText("완료: " + (out.splitlines()[-1] if out else " ".join(args)))
         elif code in (126, 127) and not WINDOWS:
             self.msg.setText("취소됨 (권한 요청을 닫았거나 인증에 실패했습니다)")

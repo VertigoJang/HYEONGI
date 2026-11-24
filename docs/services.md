@@ -117,12 +117,16 @@ sudo bash packaging/install-xdp.sh --revert             # nftables로 되돌리�
   읽어 들입니다. 맵은 `/sys/fs/bpf/checkhook`에 고정되고, 프로그램은 `bpftool net attach`로
   인터페이스에 붙습니다. 이 부착은 CheckHook 프로세스와 관계없이 커널에 남으며, 부팅 시
   `checkhook-xdp`가 다시 붙입니다.
-- 탐지기는 고정된 해시 맵에 항목을 넣습니다(키: 출발지 IPv4, 값: `CLOCK_MONOTONIC` 기준
-  만료 시각). XDP 프로그램이 만료 시각을 직접 확인하고 지난 항목을 지우므로 `block_timeout`이
+- 탐지기는 고정된 해시 맵에 항목을 넣습니다. IPv4는 `checkhook_block`(키: 출발지 IPv4 4바이트),
+  IPv6는 `checkhook_block6`(키: 출발지 IPv6 16바이트)이고, 값은 둘 다 `CLOCK_MONOTONIC` 기준
+  만료 시각입니다. XDP 프로그램이 만료 시각을 직접 확인하고 지난 항목을 지우므로 `block_timeout`이
   nftables와 똑같이 동작합니다.
 - 무선 랜카드는 보통 native XDP를 지원하지 않습니다. `mode: generic`은 모든 랜카드에서
   동작합니다.
-- IPv4만 다룹니다. 재부팅하면 차단 항목은 사라집니다(nftables도 같습니다).
+- IPv4와 IPv6를 모두 다룹니다(3.0.0rc33부터). IPv6는 주소 하나(/128) 단위로 막으므로, /64 안에서
+  주소를 계속 바꾸는 공격자는 항목 하나로 막히지 않습니다. rc33 이전에 붙인 프로그램에는 IPv6 맵이
+  없으니 `sudo systemctl restart checkhook-xdp`로 다시 붙여야 합니다. 재부팅하면 차단 항목은
+  사라집니다(nftables도 같습니다).
 
 `enforce:`는 집행 방식과 별개입니다. `enforce: false`이면 어느 쪽 차단 목록에도 아무것도
 쓰지 않습니다.
@@ -130,8 +134,8 @@ sudo bash packaging/install-xdp.sh --revert             # nftables로 되돌리�
 ## firewalld, ufw와의 관계
 
 CheckHook은 firewalld나 ufw의 규칙을 건드리지 않습니다. 모든 규칙은 별도의 nftables 테이블
-`ip checkhook`에 있으며, 이 테이블의 입력 체인은 우선순위 -150에 붙어 일반 필터 규칙(우선순위
-0)보다 먼저 실행됩니다.
+`ip checkhook`(IPv4)과 `ip6 checkhook`(IPv6)에 있으며, 두 테이블의 입력 체인은 우선순위 -150에
+붙어 일반 필터 규칙(우선순위 0)보다 먼저 실행됩니다.
 
 - nftables는 하나의 훅에 붙은 모든 체인을 평가합니다. 어느 체인이든 drop은 최종 결정이며,
   다른 테이블의 accept가 이를 뒤집지 못합니다. 따라서 차단된 IP는 firewalld 설정과 관계없이
@@ -142,10 +146,11 @@ CheckHook은 firewalld나 ufw의 규칙을 건드리지 않습니다. 모든 규
 직접 확인하는 방법입니다(테이블 이름은 firewalld 버전에 따라 다릅니다).
 
 ```bash
-sudo nft list tables                    # ip checkhook과 firewalld의 테이블이 보여야 합니다
+sudo nft list tables                     # ip checkhook, ip6 checkhook, firewalld의 테이블이 보여야 합니다
 sudo firewall-cmd --reload
-sudo nft list tables                    # 다시 불러온 뒤에도 ip checkhook이 남아 있어야 합니다
-sudo nft list chain ip checkhook input  # priority -150 ... ip saddr @blocklist drop
+sudo nft list tables                     # 다시 불러온 뒤에도 두 checkhook 테이블이 남아 있어야 합니다
+sudo nft list chain ip checkhook input   # priority -150 ... ip saddr @blocklist drop
+sudo nft list chain ip6 checkhook input  # priority -150 ... ip6 saddr @blocklist drop
 ```
 
 firewalld를 다시 불러올 때 `checkhook` 테이블이 사라지는 환경이라면

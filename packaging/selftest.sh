@@ -26,6 +26,7 @@ warn() { WARN=$((WARN+1)); printf '  [WARN] %s\n' "$*"; }
 fail() { FAIL=$((FAIL+1)); printf '  [FAIL] %s\n' "$*"; }
 section() { printf '\n== %s ==\n' "$*"; }
 TEST_IP=203.0.113.250
+TEST_IP6=2001:db8::250      # RFC 3849 documentation prefix, never routed
 
 # ---------------------------------------------------------------- system ----
 section "system"
@@ -86,19 +87,21 @@ if [[ "$BACKEND" == xdp ]]; then
     || fail "XDP not loaded: $(head -1 /tmp/checkhook-selftest.$$)"
   rm -f /tmp/checkhook-selftest.$$
 fi
-if [[ "$BACKEND" == nft ]] && ! nft list table ip checkhook >/dev/null 2>&1; then
-  warn "nft table 'ip checkhook' not there yet (checkhookd creates it on start)"
+if [[ "$BACKEND" == nft ]] && ! { nft list table ip checkhook && nft list table ip6 checkhook; } >/dev/null 2>&1; then
+  warn "nft tables 'ip checkhook' / 'ip6 checkhook' not both there yet (checkhookd creates them on start)"
 fi
 BL=(python3 -m checkhook.blocklist --backend "$BACKEND")
-if "${BL[@]}" add "$TEST_IP" --timeout 2m >/dev/null 2>&1; then
-  if "${BL[@]}" list 2>/dev/null | grep -qw "$TEST_IP"; then pass "add $TEST_IP -> listed"
-  else fail "added $TEST_IP but it is not listed"; fi
-  "${BL[@]}" remove "$TEST_IP" >/dev/null 2>&1
-  if "${BL[@]}" list 2>/dev/null | grep -qw "$TEST_IP"; then fail "remove $TEST_IP failed (expires in 2 min anyway)"
-  else pass "remove $TEST_IP -> gone"; fi
-else
-  fail "could not add $TEST_IP: $("${BL[@]}" add "$TEST_IP" --timeout 2m 2>&1 | tail -1)"
-fi
+for T in "$TEST_IP" "$TEST_IP6"; do
+  if "${BL[@]}" add "$T" --timeout 2m >/dev/null 2>&1; then
+    if "${BL[@]}" list 2>/dev/null | grep -qw -- "$T"; then pass "add $T -> listed"
+    else fail "added $T but it is not listed"; fi
+    "${BL[@]}" remove "$T" >/dev/null 2>&1
+    if "${BL[@]}" list 2>/dev/null | grep -qw -- "$T"; then fail "remove $T failed (expires in 2 min anyway)"
+    else pass "remove $T -> gone"; fi
+  else
+    fail "could not add $T: $("${BL[@]}" add "$T" --timeout 2m 2>&1 | tail -1)"
+  fi
+done
 
 # --------------------------------------------------------------- detection ---
 section "detection"
