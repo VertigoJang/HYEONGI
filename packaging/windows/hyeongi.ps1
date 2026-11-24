@@ -80,7 +80,7 @@ function Show-Menu {
     Write-Host '    train ...         ml.train'
     Write-Host '    eval ...          ml.eval'
     Write-Host ''
-    Write-Host '  Detectors default to dry-run (enforce: false). Enforcement is never automatic.' -ForegroundColor DarkGray
+    Write-Host '  Blocking is off until enforce: true. Once on, detectors block without asking.' -ForegroundColor DarkGray
     Write-Host ''
 }
 

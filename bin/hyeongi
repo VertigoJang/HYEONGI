@@ -84,7 +84,7 @@ menu() {
     ${CYAN}demo${RST} on IFACE|off  presentation mode on an isolated lab interface ${DIM}(root)${RST}
 
     ${CYAN}version${RST} | ${CYAN}help${RST}
-  ${DIM}Detectors default to --dry-run. Enforcement is never automatic.${RST}
+  ${DIM}Blocking is off until enforce: true. Once on, detectors block without asking.${RST}
 
 EOF
 }

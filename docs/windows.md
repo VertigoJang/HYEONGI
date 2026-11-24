@@ -38,7 +38,7 @@
 저장소를 내려받은 뒤 관리자 권한 PowerShell에서 실행합니다.
 
 ```powershell
-git clone https://github.com/VertigoJang/hyeongi C:\HYEONGI
+git clone https://github.com/VertigoJang/HYEONGI C:\HYEONGI
 cd C:\HYEONGI
 powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1
 ```

@@ -57,6 +57,9 @@ sudo hyeongi pause 칼리 실습      # 탐지는 계속, 학습 데이터 저�
 sudo hyeongi resume
 ```
 
+멈춘 동안에는 재부팅해도 `hyeongi-capture`가 다시 시작되지 않습니다(3.0.0rc43부터. 그 전에
+설치했다면 `install-capture.sh`를 다시 실행해야 적용됩니다).
+
 멈춘 시각과 다시 시작한 시각은 `/var/lib/hyeongi/pauses.log`에 남습니다. 실습 트래픽이
 가상 머신의 내부 네트워크 안에서만 오간다면 노트북의 랜카드를 지나지 않으므로 멈추지 않아도
 됩니다.
@@ -117,6 +120,10 @@ sudo bash packaging/install-xdp.sh --revert             # nftables로 되돌리�
   읽어 들입니다. 맵은 `/sys/fs/bpf/hyeongi`에 고정되고, 프로그램은 `bpftool net attach`로
   인터페이스에 붙습니다. 이 부착은 HYEONGI 프로세스와 관계없이 커널에 남으며, 부팅 시
   `hyeongi-xdp`가 다시 붙입니다.
+- 인터페이스가 없어졌다가 다시 생기면 맵은 남고 부착만 사라집니다. `hyeongid`가 1분마다
+  확인해 다시 붙이며(3.0.0rc43부터), 붙이지 못한 동안에는 차단을 `[BLOCK]`으로 기록하지
+  않고 `[would-block]`과 이유를 남깁니다. `sudo hyeongi xdp`의 `loaded for` 줄에서 지금
+  상태를 볼 수 있습니다.
 - 탐지기는 고정된 해시 맵에 항목을 넣습니다. IPv4는 `hyeongi_block`(키: 출발지 IPv4 4바이트),
   IPv6는 `hyeongi_block6`(키: 출발지 IPv6 16바이트)이고, 값은 둘 다 `CLOCK_MONOTONIC` 기준
   만료 시각입니다. XDP 프로그램이 만료 시각을 직접 확인하고 지난 항목을 지우므로 `block_timeout`이

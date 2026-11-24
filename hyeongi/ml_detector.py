@@ -53,7 +53,8 @@ class AlertWriter:
 
 def run(iface, clf=None, bl=None, threshold=0.9, block_private=False,
         idle=15, active=120, log=print, on_flow=None, stop=None,
-        skip=(), local=None, refresh=3600, on_event=None, alerts=None, clock=None, policy=None):
+        skip=(), local=None, refresh=3600, on_event=None, alerts=None, clock=None, policy=None,
+        retry=60):
     """Classify live flows on `iface`.
 
     clf: trained classifier, or None to only observe flows (e.g. for logging).
@@ -64,6 +65,7 @@ def run(iface, clf=None, bl=None, threshold=0.9, block_private=False,
       gateway and own addresses); same rules as the IDS bridge.
     refresh: seconds before a source that keeps scoring high is acted on again
       (= block_timeout, so it is blocked again once the block expired).
+    retry: seconds after which a block that FAILED is tried again.
     on_event: optional callback(alert_dict, action) for the status board.
     alerts: optional AlertWriter; every high-scoring flow is recorded there.
     """
@@ -102,7 +104,8 @@ def run(iface, clf=None, bl=None, threshold=0.9, block_private=False,
             try:
                 bl.add(src)
             except (RuntimeError, ValueError) as e:
-                block, extra = False, f"  (block failed: {e})"
+                block, extra = False, f"  (block failed: {e}; next try in {retry}s)"
+                seen[src] = now - refresh + retry
         tag = "[BLOCK]" if block else "[would-block]"
         ev(al, "blocked" if block else "would-block")
         log(f"{tag} {src}  (ml p={p:.2f} -> {flow.dst_ip}:{flow.dst_port}){extra}")

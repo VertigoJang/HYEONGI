@@ -131,6 +131,8 @@ class Blocklist:
             self._win.add(ip, parse_timeout(to))
             return
         if self.backend == "xdp":
+            from hyeongi import xdp
+            xdp.ensure_attached()          # else the map is updated and nothing is dropped
             secs = parse_timeout(to)
             expiry = time.monotonic_ns() + secs * 1_000_000_000 if secs else 0
             _xdp_put(ip, expiry)
@@ -334,7 +336,11 @@ def _cli():
     elif a.cmd == "add":
         if not a.ip: ap.error("add needs an IP")
         bl.setup()  # create (nft) / verify loaded (xdp); keeps existing entries
-        bl.add(a.ip); print(f"[+] blocked {a.ip} (timeout {a.timeout}, {backend})")
+        try:
+            bl.add(a.ip)
+        except RuntimeError as e:
+            sys.exit(f"[x] not blocked: {e}")
+        print(f"[+] blocked {a.ip} (timeout {a.timeout}, {backend})")
     elif a.cmd == "remove":
         if not a.ip: ap.error("remove needs an IP")
         bl.remove(a.ip); print(f"[+] removed {a.ip}")

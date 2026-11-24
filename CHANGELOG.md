@@ -2,6 +2,44 @@
 
 ## 3.0.0 (in testing)
 
+**Reported blocks are real blocks**
+- rc43: fixes for cases where HYEONGI said more than it did.
+  - XDP: the pinned program and maps outlive the attachment (an interface that is removed
+    and created again loses it), and `xdp load` answered "already loaded" without looking.
+    A map update then succeeded and was logged as `[BLOCK]` while nothing was dropped.
+    Now `load` attaches again when the attachment is missing. Every block first checks,
+    by program id, that the program is on the interface it was loaded for (`bpftool net
+    show`, at most every 30 s) and attaches it again if not; if that fails, the block is
+    logged as `[would-block] (block failed: ...)`. hyeongid repeats the check every
+    `expiry_interval` for the entries already in the map and logs when blocked IPs are
+    not being dropped. `hyeongi xdp` has a `loaded for` line, and `practice end` checks
+    the attachment, not only the pins. When bpftool's answer cannot be read, nothing
+    changes compared with before. `/run/hyeongi-xdp.iface` now holds "iface mode".
+  - The interfaces are still the ones in the config. `hyeongi net` names the watched one
+    and warns when the default route is on another (traffic there is not inspected);
+    hyeongid warns at start when `ml.iface` and `xdp.iface` differ. Following the default
+    route is not in this version.
+  - A block that failed was remembered as handled for the whole `block_timeout`, so that
+    source was not tried again for an hour. It is tried again after 60 s (IDS bridge and
+    ML detector).
+  - `hyeongi net` showed "ENFORCE (trusted)" on a trusted network even with
+    `enforce: false`. It shows what really happens: ENFORCE, or OBSERVE-ONLY with the
+    reason.
+  - `hyeongi pause` did not survive a reboot for the packet capture: the unit was stopped
+    but still enabled, and benign-*.pcap files were written during a pause on the test
+    laptop. The capture unit now has an ExecCondition on the pause flag and does not
+    start while it exists. Installed units: run `install-capture.sh` again.
+  - `practice end` left hyeongi-capture stopped when everything had been stopped before
+    `practice start`. It runs again if it ran before or starts at boot.
+  - `demo on` refuses during practice mode (hyeongid only waits then, so Snort would run
+    with nothing reading its alerts).
+  - The menu said "Enforcement is never automatic", which is not what `enforce: true`
+    does. It says: blocking is off until `enforce: true`; once on, detectors block
+    without asking.
+  - Docs: the repository is `VertigoJang/HYEONGI`.
+  - Tested with fake commands and made-up bpftool answers (single and multi-attachment
+    form) only; not yet run on a machine with the program attached.
+
 **Name**
 - rc42: the project is called HYEONGI: Host-based, Your-network-gated Enforcement with
   On-device Network Guard & Inspection.

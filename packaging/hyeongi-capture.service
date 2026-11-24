@@ -13,9 +13,11 @@
 # 'hyeongi-cap') and writes as that user, so the directory is handed to that
 # user just before start. On SELinux systems the directory label is re-applied.
 #
-# IMPORTANT: this assumes the captured traffic is NORMAL. Stop it before any
+# IMPORTANT: this assumes the captured traffic is NORMAL. Pause it before any
 # attack practice on the same host or LAN, or that traffic gets mislabelled 0:
-#   sudo systemctl stop hyeongi-capture
+#   sudo hyeongi pause
+# While collection is paused (the flag file below exists) the unit does not
+# start, not even at boot: `systemctl stop` alone would be undone by a reboot.
 Description=HYEONGI benign-traffic capture (headers only, ML training data)
 After=network-online.target
 Wants=network-online.target
@@ -23,6 +25,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 UMask=0022
+ExecCondition=/usr/bin/test ! -e /var/lib/hyeongi/collection.paused
 ExecStartPre=/usr/bin/install -d -o __CAPUSER__ -g __CAPUSER__ -m 0755 /var/lib/hyeongi
 ExecStartPre=-__RESTORECON__ -R /var/lib/hyeongi
 ExecStartPre=/bin/sh -c 'ls -1t /var/lib/hyeongi/benign*.pcap* 2>/dev/null | tail -n +__MAXFILES__ | xargs -r rm -f'

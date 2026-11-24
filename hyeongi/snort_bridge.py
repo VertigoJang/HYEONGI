@@ -55,7 +55,7 @@ def follow(path, from_start, stop=None):
 
 def run(alert_file, bl=None, skip=(), block_private=False, from_start=False,
         log=print, stop=None, ignore_gids=(), refresh=3600, clock=time.monotonic,
-        ignore_rules=(), local=None, on_event=None, ignore=None, policy=None):
+        ignore_rules=(), local=None, on_event=None, ignore=None, policy=None, retry=60):
     """Follow an IDS alert file and block (bl given) or only report sources.
 
     bl: a Blocklist to enforce with, or None for dry-run.
@@ -69,6 +69,8 @@ def run(alert_file, bl=None, skip=(), block_private=False, from_start=False,
       blocked, would-block, skip, ignored, recent (feeds the status board).
     refresh: seconds after which a source that keeps alerting is added again
       (= block_timeout, so an attacker is blocked again once its block expired).
+    retry: seconds after which a block that FAILED is tried again; a source whose
+      block failed is not treated as handled for the whole refresh time.
     """
     seen = {}; skip = {norm_ip(str(x)) for x in skip}
     ignore = ignore if ignore is not None else Ignore(ignore_gids, ignore_rules)
@@ -104,7 +106,8 @@ def run(alert_file, bl=None, skip=(), block_private=False, from_start=False,
             try:
                 bl.add(src)
             except (RuntimeError, ValueError) as e:
-                block, extra = False, f"  (block failed: {e})"
+                block, extra = False, f"  (block failed: {e}; next try in {retry}s)"
+                seen[src] = now - refresh + retry
         tag = "[BLOCK]" if block else "[would-block]"
         ev(al, "blocked" if block else "would-block")
         log(f"{tag} {src}  ({al['ids']} sid={al['sid']} {al['msg']}){extra}")

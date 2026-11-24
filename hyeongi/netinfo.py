@@ -215,16 +215,16 @@ class NetworkPolicy:
         self.trusted = {str(m).lower() for m in (trusted or ()) if m}
         self.ttl, self.clock = ttl, clock
         self.probe = probe or default_gateway_mac
-        self._at = self._mac = self._gw = None
+        self._at = self._mac = self._gw = self._iface = None
 
     def _refresh(self):
         now = self.clock()
         if self._at is None or now - self._at >= self.ttl:
             try:
-                self._gw, mac, _ = self.probe()
+                self._gw, mac, self._iface = self.probe()
                 self._mac = mac.lower() if mac else None
             except Exception:
-                self._gw = self._mac = None
+                self._gw = self._mac = self._iface = None
             self._at = now
 
     def allowed(self):
@@ -235,7 +235,7 @@ class NetworkPolicy:
 
     def current(self):
         self._refresh()
-        return {"gateway": self._gw, "mac": self._mac,
+        return {"gateway": self._gw, "mac": self._mac, "iface": self._iface,
                 "trusted": (not self.trusted) or (bool(self._mac) and self._mac in self.trusted),
                 "gating": bool(self.trusted)}
 

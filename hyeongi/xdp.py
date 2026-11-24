@@ -10,7 +10,10 @@ How it works
   * `bpftool prog load ... pinmaps` loads it and pins its maps under
     /sys/fs/bpf/hyeongi, so they outlive this process.
   * `bpftool net attach` hooks it to the interface. The attachment stays in
-    the kernel until `unload`, independent of any HYEONGI process.
+    the kernel until `unload`, independent of any HYEONGI process - but it is
+    lost when the interface itself is removed and created again, while the
+    pinned program and maps stay. `attached` and `ensure_attached` check for
+    that, so a block is never reported while nothing is dropped.
   * Detectors add/remove blocked IPs by updating the pinned map (see
     hyeongi.blocklist, backend "xdp"); the program drops matching sources before
     the kernel allocates an skb.
@@ -24,6 +27,8 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "bpf", "hyeongi_xdp.c")
@@ -50,7 +55,7 @@ def need(tool, pkg):
                  "(packaging/install-xdp.sh prints the exact command for your distro)")
 
 
-IFACE_FILE = "/run/hyeongi-xdp.iface"   # where the program is attached right now
+IFACE_FILE = "/run/hyeongi-xdp.iface"   # where the program is attached right now: "iface mode"
 
 
 def loaded():
@@ -89,7 +94,19 @@ def load(iface, mode="generic"):
     keep = []
     if loaded():
         if has_ipv6():
-            print(f"[=] already loaded ({PIN_DIR}); entries kept")
+            was = target()[0]
+            if was and was != iface:          # loaded for another interface: move it
+                _detach(was)
+            state = attached(iface)
+            if state is False:                # pins are there, the attachment is not
+                attach(iface, mode)
+                print(f"[+] already loaded ({PIN_DIR}); attached to {iface} ({mode}), entries kept")
+            elif state is None:
+                print(f"[=] already loaded ({PIN_DIR}); entries kept "
+                      f"(could not verify the attachment to {iface})")
+            else:
+                _record(iface, mode)
+                print(f"[=] already loaded ({PIN_DIR}) and attached to {iface}; entries kept")
             return
         # an older program without the IPv6 map: replace it, keeping the IPv4 blocks
         from hyeongi.blocklist import _xdp_entries
@@ -100,19 +117,143 @@ def load(iface, mode="generic"):
     os.makedirs(PIN_DIR, exist_ok=True)
     _run(["bpftool", "prog", "load", OBJ, PROG_PIN, "type", "xdp", "pinmaps", PIN_DIR])
     try:
-        _run(["bpftool", "net", "attach", ATTACH[mode], "pinned", PROG_PIN, "dev", iface])
+        attach(iface, mode)
     except RuntimeError:
         _cleanup_pins()
         raise
-    try:
-        with open(IFACE_FILE, "w") as f:
-            f.write(iface + "\n")
-    except OSError:
-        pass
     if keep:
         from hyeongi.blocklist import _xdp_restore
         _xdp_restore(keep)
     print(f"[+] XDP attached to {iface} ({mode}); blocklist map: {BLOCK_MAP}")
+
+
+def target(iface=None, mode=None):
+    """(iface, mode) the program was attached with: what `load` recorded in
+    IFACE_FILE (files written before rc43 hold the interface only), else the
+    arguments. mode falls back to "generic"."""
+    try:
+        with open(IFACE_FILE) as f:
+            parts = f.read().split()
+    except OSError:
+        parts = []
+    if parts:
+        iface = parts[0]
+        if len(parts) > 1 and parts[1] in ATTACH:
+            mode = parts[1]
+    return iface, mode or "generic"
+
+
+def _record(iface, mode):
+    try:
+        with open(IFACE_FILE, "w") as f:
+            f.write(f"{iface} {mode}\n")
+    except OSError:
+        pass
+
+
+def attach(iface, mode="generic"):
+    """Attach the pinned program to `iface` and record where it is."""
+    _run(["bpftool", "net", "attach", ATTACH[mode], "pinned", PROG_PIN, "dev", iface])
+    _record(iface, mode)
+    _checked.clear()
+
+
+def _detach(iface):
+    if iface and shutil.which("bpftool"):
+        for mode in ("xdpgeneric", "xdpdrv", "xdp"):
+            _run(["bpftool", "net", "detach", mode, "dev", iface], check=False)
+
+
+def prog_id():
+    """Kernel id of the pinned program, or None if it cannot be read."""
+    r = _run(["bpftool", "-j", "prog", "show", "pinned", PROG_PIN], check=False)
+    try:
+        return int(json.loads(r.stdout)["id"])
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def _ids_in(obj):
+    """Every integer stored under an "id" key anywhere in a bpftool JSON value."""
+    out = set()
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == "id" and isinstance(v, int):
+                out.add(v)
+            else:
+                out |= _ids_in(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            out |= _ids_in(v)
+    return out
+
+
+def attached(iface):
+    """Is the pinned program attached to `iface`?
+
+    True / False, or None when that cannot be told (bpftool missing, or its
+    output not understood): callers then leave things as they are instead of
+    guessing. Compares program ids, so another XDP program on the interface
+    does not count."""
+    if not iface or not loaded() or not os.path.exists(f"/sys/class/net/{iface}"):
+        return False
+    if not shutil.which("bpftool"):
+        return None
+    pid = prog_id()
+    r = _run(["bpftool", "-j", "net", "show", "dev", iface], check=False)
+    if pid is None or r.returncode != 0:
+        return None
+    try:
+        data = json.loads(r.stdout or "null")
+    except ValueError:
+        return None
+    entries = []
+    for top in (data if isinstance(data, list) else [data]):
+        if isinstance(top, dict):
+            entries += [e for e in (top.get("xdp") or [])
+                        if not isinstance(e, dict) or e.get("devname") in (None, iface)]
+    if not entries:
+        return False                      # no XDP program on this interface at all
+    ids = _ids_in(entries)
+    if not ids:
+        return None                       # something is attached, but no ids were printed
+    return pid in ids
+
+
+_checked = {}   # last result of ensure_attached: {"at": monotonic seconds, "err": str or None}
+_check_lock = threading.Lock()          # the IDS, flow and expiry workers all ask
+
+
+def ensure_attached(ttl=30, clock=time.monotonic):
+    """Make sure the loaded program is on the interface it was loaded for, so
+    that a blocklist entry really drops packets. If the attachment is gone it is
+    attached again; if that fails, RuntimeError. Looked at once per `ttl`
+    seconds at most; the answer in between is the last one."""
+    with _check_lock:
+        now = clock()
+        if not _checked or now - _checked["at"] >= ttl:
+            err = _attach_error()
+            _checked.update(at=now, err=err)
+        err = _checked["err"]
+    if err:
+        raise RuntimeError(err)
+
+
+def _attach_error():
+    iface, mode = target()
+    if not iface:
+        return None                       # not attached by `load`: nothing to compare with
+    if attached(iface) is not False:
+        return None                       # attached, or cannot tell: as before
+    try:
+        attach(iface, mode)
+    except RuntimeError as e:
+        if attached(iface):               # another process attached it meanwhile
+            return None
+        why = (str(e).strip().splitlines() or ["?"])[-1]
+        return f"the XDP program is not attached to {iface} and attaching it failed: {why}"
+    print(f"[*] the XDP program was not attached to {iface}; attached again ({mode})", flush=True)
+    return None
 
 
 def _cleanup_pins():
@@ -126,14 +267,9 @@ def _cleanup_pins():
 def unload(iface):
     # detach from the interface it was actually attached to (the config may
     # already name a different one, e.g. when switching interfaces)
-    try:
-        with open(IFACE_FILE) as f:
-            iface = f.read().strip() or iface
-    except OSError:
-        pass
-    if shutil.which("bpftool"):
-        for mode in ("xdpgeneric", "xdpdrv", "xdp"):
-            _run(["bpftool", "net", "detach", mode, "dev", iface], check=False)
+    iface = target(iface)[0]
+    _detach(iface)
+    _checked.clear()
     try:
         os.unlink(IFACE_FILE)
     except OSError:
@@ -186,6 +322,10 @@ def status():
         if in_xdp and line.strip():
             xdp_lines.append(line.strip())
     print("  attached to : " + (", ".join(xdp_lines) or "(none found)"))
+    iface = target()[0]
+    if iface:
+        print(f"  loaded for  : {iface}  ->  " + {True: "attached", None: "could not verify",
+              False: "NOT attached: blocked IPs are not dropped (sudo systemctl restart hyeongi-xdp)"}[attached(iface)])
 
 
 def main():

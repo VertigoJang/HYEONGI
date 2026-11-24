@@ -21,7 +21,9 @@ start
 end
   1. turns start at boot back on for the units that had it, starts
      hyeongi-xdp, hyeongi-ids, hyeongid
-  2. resumes collection; hyeongi-capture is left as it was before start
+  2. resumes collection; hyeongi-capture runs again if it ran before start or
+     starts at boot (so stopping everything first, then `practice start`, does
+     not leave it off)
   3. checks: services up, XDP attached again (backend xdp), the newest flow log
      from before start unchanged, no flow log written during the practice, and
      (with --target) no flow row with a target address
@@ -193,8 +195,8 @@ def end():
         _systemctl("restart", "hyeongi-xdp")        # oneshot: restart = attach again
         _systemctl("start", "hyeongi-ids", "hyeongid")
     collect(["resume"])                               # also starts hyeongi-capture
-    if s.get("capture_was") != "active":
-        _systemctl("stop", CAPTURE)
+    if s.get("capture_was") != "active" and CAPTURE not in (s.get("enabled_before") or []):
+        _systemctl("stop", CAPTURE)               # was off and does not start at boot: leave it off
     time.sleep(5)
 
     ok, lines = True, []
@@ -212,7 +214,8 @@ def end():
               "start at boot restored: " + ", ".join(f"{u} {v}" for u, v in back.items()))
     if c["backend"] == "xdp" and not config.WINDOWS:
         from hyeongi import xdp
-        check(xdp.loaded(), "XDP program attached again" if xdp.loaded() else "XDP program not attached")
+        on = xdp.loaded() and xdp.attached(xdp.target(c["xdp"]["iface"])[0]) is not False
+        check(on, "XDP program attached again" if on else "XDP program not attached")
     from hyeongi.collect import paused
     check(not paused(), "training-data collection resumed" if not paused() else "collection still paused")
     t0 = s["start_epoch"]

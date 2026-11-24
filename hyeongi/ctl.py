@@ -204,7 +204,10 @@ def main(argv=None):
         from hyeongi.blocklist import Blocklist
         bl = Blocklist(backend=c["backend"], default_timeout=c["block_timeout"])
         bl.setup()
-        bl.add(ip)
+        try:
+            bl.add(ip)
+        except RuntimeError as e:
+            die(f"not blocked: {e}")
         from hyeongi.status import log_manual
         log_manual(ip, "block")
         print(f"[+] blocked {ip} for {c['block_timeout']} (manual)")
@@ -276,11 +279,21 @@ def main(argv=None):
             tag = "(gw-... tag; appears once hyeongid has logged flows)"
         print(f"flow-log tag: {tag}" + ("" if tag in names.values() or not cur["mac"]
                                         else "   (name it: sudo hyeongi name-here <name>)"))
+        enforce = bool(c["enforce"])
         if not cur["gating"]:
-            print("gating: off (no trusted gateways) -> enforcement follows enforce: everywhere")
+            print("gating: off (no trusted gateways) -> "
+                  + ("ENFORCE on every network (enforce: true)" if enforce
+                     else "OBSERVE-ONLY on every network (enforce: false)"))
         else:
             print(f"gating: on ({len(trusted)} trusted) -> this network: "
-                  + ("ENFORCE (trusted)" if cur["trusted"] else "OBSERVE-ONLY (untrusted)"))
+                  + ("OBSERVE-ONLY (untrusted)" if not cur["trusted"]
+                     else "ENFORCE (trusted)" if enforce
+                     else "OBSERVE-ONLY (trusted, but enforce: false)"))
+        if not config.WINDOWS:
+            watch = c["ml"]["iface"]
+            away = cur.get("iface") and cur["iface"] != watch
+            print(f"watching: {watch}" + (f"   [!] the default route is on {cur['iface']}: "
+                                          "traffic there is not inspected" if away else ""))
     elif cmd == "practice":
         from hyeongi.practice import main as practice
         sys.exit(practice(args))

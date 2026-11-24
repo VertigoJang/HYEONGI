@@ -58,7 +58,7 @@ LLM 부분까지 시험하려면 한 대(예: Windows 11 실제 컴퓨터)에서
 배포판별 패키지 이름은 `docs/linux.md`에 있습니다.
 
 ```bash
-git clone https://github.com/VertigoJang/hyeongi ~/hyeongi && cd ~/hyeongi
+git clone https://github.com/VertigoJang/HYEONGI ~/hyeongi && cd ~/hyeongi
 sudo bash packaging/install-capture.sh
 sudo bash packaging/install-services.sh
 # 시그니처 탐지기: 배포판의 Suricata를 설치하고 suricata.yaml의 interface를 맞춘 뒤
@@ -76,7 +76,7 @@ sudo bash packaging/selftest.sh
 실행합니다.
 
 ```powershell
-git clone https://github.com/VertigoJang/hyeongi C:\hyeongi; cd C:\hyeongi
+git clone https://github.com/VertigoJang/HYEONGI C:\hyeongi; cd C:\hyeongi
 powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1
 powershell -ExecutionPolicy Bypass -File packaging\windows\selftest.ps1
 ```

@@ -95,6 +95,8 @@ sleep 3
 echo
 if systemctl is-active --quiet hyeongi-capture; then
   echo "RUNNING: hyeongi-capture"
+elif [[ -e "$DATA/collection.paused" ]]; then
+  echo "NOT started: training-data collection is paused (sudo hyeongi resume)"
 else
   echo "NOT running — see:  sudo journalctl -eu hyeongi-capture --no-pager | tail"
 fi
@@ -102,5 +104,5 @@ echo "  interface : $IFACE   (headers only, snaplen 128B — no payload saved; r
 echo "  files     : $DATA/benign-<start time>.pcapNN  (25 MB each, up to $((MAXFILES / 40)) GB, oldest removed)"
 echo
 echo "check it:   systemctl status hyeongi-capture"
-echo "pause it:   sudo systemctl stop hyeongi-capture     # before attack practice!"
-echo "resume:     sudo systemctl start hyeongi-capture"
+echo "pause it:   sudo hyeongi pause      # before attack practice! stays off across reboots"
+echo "resume:     sudo hyeongi resume"

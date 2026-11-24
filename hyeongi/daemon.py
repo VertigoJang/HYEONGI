@@ -109,6 +109,9 @@ def main():
         bl = enforcer
     log.info(f"hyeongid start: backend={backend} enforce={c['enforce']} "
              f"({'ENFORCING' if bl else 'dry-run'}); log {log_path}")
+    if backend == "xdp" and c["ml"]["iface"] != c["xdp"]["iface"]:
+        log.warning(f"ml.iface is {c['ml']['iface']} but xdp.iface is {c['xdp']['iface']}: "
+                    "what is detected on the first is not dropped on the second")
 
     workers = []
     from hyeongi.status import Board
@@ -204,10 +207,25 @@ def main():
     # ---- expiry ---------------------------------------------------------------
     def expiry():
         from hyeongi.alerts import prune_rotated
+        xdp_err = None
         while not stop.wait(c["daemon"]["expiry_interval"]):
             n = enforcer.reconcile()
             if n:
                 log.info(f"expired {n} block(s)")
+            if backend == "xdp" and enforcer.exists():
+                # entries already in the map only drop packets while the program is attached
+                from hyeongi import xdp
+                try:
+                    xdp.ensure_attached()
+                    err = None
+                except RuntimeError as e:
+                    err = str(e)
+                if err != xdp_err:
+                    if err:
+                        log.error(f"xdp: {err}; blocked IPs are NOT being dropped")
+                    else:
+                        log.info("xdp: attached again; blocked IPs are dropped")
+                    xdp_err = err
             # rotated alert files pile up 100 MB at a time during a flood
             for path, keep in ((c["ids"].get("alert_file"), c["ids"].get("keep_rotated", 3)),
                                (c["ml"].get("alert_file"), 1)):

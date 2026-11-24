@@ -59,6 +59,10 @@ MODEL_SAVED = "model.before"   # in STATE: the model that was installed before (
 def on(iface, model=None):
     if os.path.exists(STATE):
         sys.exit("[x] demo mode is already on (sudo hyeongi demo off first)")
+    from hyeongi.practice import state as practice_state
+    ps = practice_state()
+    if ps:                                # hyeongid would only wait: Snort up, nothing reading it
+        sys.exit(f"[x] practice mode is on since {ps['start']}; end it first: sudo hyeongi practice end")
     if not os.path.exists(f"/sys/class/net/{iface}"):
         sys.exit(f"[x] no interface {iface}. Start the attacker VM with its host-only adapter, or "
                  "run `sudo bash packaging/lab-netns.sh up` for hy-host, first "

@@ -1,7 +1,8 @@
 """Pause and resume training-data collection (attack practice on the same host).
 
 While paused, hyeongid keeps detecting but writes no flow rows, and on Linux
-the hyeongi-capture packet capture is stopped. Every pause and resume is
+the hyeongi-capture packet capture is stopped and stays stopped across reboots
+(its unit has an ExecCondition on the flag file). Every pause and resume is
 appended to pauses.log, so a dataset can also drop that window afterwards.
 
   python3 -m hyeongi.collect pause [reason...]

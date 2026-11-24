@@ -109,7 +109,7 @@ XDP)은 그 판단을 빠르고 적은 비용으로 집행합니다. 두 계층�
 ### 리눅스
 
 ```bash
-git clone https://github.com/VertigoJang/hyeongi && cd hyeongi
+git clone https://github.com/VertigoJang/HYEONGI && cd HYEONGI
 
 sudo bash packaging/install-capture.sh  wlp0s20f3                # 학습용 정상 트래픽 수집
 sudo bash packaging/install-services.sh --iface wlp0s20f3        # hyeongid, hyeongi 명령
@@ -149,7 +149,7 @@ Snort 3 대신 배포판의 Suricata를 쓰려면 Suricata를 설치해 실행�
 관리자 권한 PowerShell에서 실행합니다.
 
 ```powershell
-git clone https://github.com/VertigoJang/hyeongi C:\HYEONGI
+git clone https://github.com/VertigoJang/HYEONGI C:\HYEONGI
 cd C:\HYEONGI
 powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1
 
