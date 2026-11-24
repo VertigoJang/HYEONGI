@@ -2,6 +2,11 @@
 
 ## 3.0.0 (in testing)
 
+**Screenshots**
+- rc44: the README shows the terminal menu and the desktop app under the new name
+  (`docs/figures/terminal-menu.png`, new `docs/figures/app-status.png`). One Korean
+  particle after the name in the README is fixed.
+
 **Reported blocks are real blocks**
 - rc43: fixes for cases where HYEONGI said more than it did.
   - XDP: the pinned program and maps outlive the attachment (an interface that is removed

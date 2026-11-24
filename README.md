@@ -134,7 +134,11 @@ Snort 3 대신 배포판의 Suricata를 쓰려면 Suricata를 설치해 실행�
 `sudo systemctl restart hyeongid`로 데몬을 다시 시작합니다. 서비스별 상세 설명은
 `docs/services.md`에 있습니다.
 
-`hyeongi`를 인자 없이 실행하면 배너와 명령 목록이 나옵니다. 주요 명령은 다음과 같습니다.
+`hyeongi`를 인자 없이 실행하면 배너와 명령 목록이 나옵니다.
+
+![HYEONGI 터미널](docs/figures/terminal-menu.png)
+
+주요 명령은 다음과 같습니다.
 
 - `hyeongi status`: 현재 차단 목록 확인
 - `sudo hyeongi block <IP>`, `sudo hyeongi unblock <IP>`: 수동 차단과 해제
@@ -164,7 +168,7 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1
 
 ## 데스크톱 앱
 
-설치 후 앱 메뉴의 **HYEONGI**을 누르면 창이 열립니다. 윈도우에서는 시작 메뉴의 HYEONGI를 누르고,
+설치 후 앱 메뉴의 **HYEONGI**를 누르면 창이 열립니다. 윈도우에서는 시작 메뉴의 HYEONGI를 누르고,
 관리자 권한 요청에 동의하면 됩니다.
 
 ![HYEONGI 앱](docs/figures/app-status.png)
