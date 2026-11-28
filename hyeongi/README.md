@@ -8,6 +8,8 @@
   blocklist. Default `--dry-run`; loopback and RFC1918 are never blocked.
 - `ml_detector.py` — ML flow detector. Classifies live nfstream flows with a
   trained RandomForest and feeds the blocklist. See `ml/` to build the model.
+- `flowpart.py` — which part of a connection a flow record is, and who started
+  the connection. The detector judges only records in which a connection starts.
 - `triage.py` — read-only LLM triage. Summarises recent detections and flags
   likely false positives via a local Ollama model. Never changes the blocklist.
 

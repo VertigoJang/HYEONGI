@@ -175,18 +175,19 @@ def main():
             on_flow = None
             if logger:
                 from hyeongi.collect import paused
+                from hyeongi.flowpart import log_dir
                 from hyeongi.netinfo import Direction, NetTagger, load_salt, salt_path
                 tagger = NetTagger((c.get("networks") or {}).get("names") or {},
                                    load_salt(salt_path(cap["dir"]), create=True))
                 direction = Direction()
                 last = [None]
-                def on_flow(flow):              # hyeongi pause: keep detecting, stop logging
+                def on_flow(flow, part, starter):   # hyeongi pause: keep detecting, stop logging
                     if not paused():
                         net = tagger.current()
                         if net != last[0]:
                             log.info(f"flow logging: network tag {net}")
                             last[0] = net
-                        logger.write(flow, net, direction(flow.src_ip, flow.dst_ip))
+                        logger.write(flow, net, log_dir(direction, flow, starter), part)
                         board.flow()
             from hyeongi.blocklist import parse_timeout
             from hyeongi.netinfo import LocalInfra

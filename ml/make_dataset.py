@@ -27,6 +27,15 @@ detectors only act on inbound flows, so build benign training/evaluation data
 from those:
 
   python3 -m ml.make_dataset --flows "/var/lib/hyeongi/flows/*.csv" --label 0 --dir in --out benign-in.csv
+
+Part: flow logs since 3.0.0rc46 carry `part`: "start" (the connection starts in
+this record), "cont" (a later piece of a connection seen before) or "mid" (a
+piece of a connection nobody saw start). The live detector only judges "start"
+records, and before rc46 `dir` came from the source of each record, so in
+older logs the later pieces of this host's own connections are marked "in".
+Older rows and PCAPs have an empty `part`.
+
+  python3 -m ml.make_dataset --flows "/var/lib/hyeongi/flows/*.csv" --label 0 --dir in --part start --out benign-in.csv
 """
 import argparse, ipaddress
 import numpy as np
@@ -84,6 +93,8 @@ def main():
                          "before the network was named); the logs are not changed")
     ap.add_argument("--dir", choices=["in", "out"], default=None,
                     help="keep only flows started by another host (in) or by this host (out)")
+    ap.add_argument("--part", action="append", choices=["start", "cont", "mid"], default=[],
+                    help="keep only these parts of a connection (repeatable; flow logs since rc46)")
     ap.add_argument("--out", default="flows.csv")
     a = ap.parse_args()
     renames = {}
@@ -112,6 +123,7 @@ def main():
         net = df["net"].fillna("").astype(str) if "net" in df.columns else pd.Series("", index=df.index)
         net = net.where(net != "", a.set_net or "unknown").replace(renames)
         d = df["dir"].fillna("").astype(str) if "dir" in df.columns else pd.Series("", index=df.index)
+        part = df["part"].fillna("").astype(str) if "part" in df.columns else pd.Series("", index=df.index)
         inferred = ""
         if (d == "").all():
             d, own = infer_dir(df)
@@ -119,6 +131,7 @@ def main():
         extra = [c for c in ("dst_port", "protocol") if c in df.columns]   # for ml.fp_report
         df = df[FEATURES + ["src_ip", "dst_ip"] + extra].copy(); df["label"] = lbl; df["net"] = net
         df["dir"] = d
+        df["part"] = part
         n0 = len(df)
         if a.net:
             df = df[df["net"].isin(a.net)]
@@ -126,8 +139,10 @@ def main():
             df = df[~df["net"].isin(a.exclude_net)]
         if a.dir:
             df = df[df["dir"] == a.dir]
+        if a.part:
+            df = df[df["part"].isin(a.part)]
         parts.append(df)
-        kept = "" if len(df) == n0 else f" (kept {len(df)} of {n0} by network/direction)"
+        kept = "" if len(df) == n0 else f" (kept {len(df)} of {n0} by network/direction/part)"
         print(f"[+] {pc}: {len(df)} flows, attack={int(df['label'].sum())}{kept}{inferred}")
     out = pd.concat(parts, ignore_index=True)
     out.to_csv(a.out, index=False)
@@ -137,6 +152,8 @@ def main():
             f"{k}={v}" for k, v in out["net"].value_counts().items()))
         print("    by direction: " + ", ".join(
             f"{k or 'unknown'}={v}" for k, v in out["dir"].value_counts().items()))
+        print("    by part: " + ", ".join(
+            f"{k or 'not recorded'}={v}" for k, v in out["part"].value_counts().items()))
 
 if __name__ == "__main__":
     main()

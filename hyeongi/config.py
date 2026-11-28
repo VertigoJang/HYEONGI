@@ -83,7 +83,8 @@ DEFAULTS = {
     # flow logging for ML training data: every finished flow's features go to
     # CSV (a few hundred bytes per flow, versus megabytes of raw packets).
     # enabled: true / false / auto (= on when nfstream is installed).
-    # rows_per_file x keep bounds the disk use (~20 MB per 50000 rows).
+    # rows_per_file x keep bounds the disk use (~20 MB per 50000 rows): the oldest
+    # files go when all of them together take more than `keep` full files would.
     "capture": {"enabled": "auto", "dir": "/var/lib/hyeongi/flows",
                 "rows_per_file": 50000, "keep": 100},
     "daemon": {"expiry_interval": 60, "triage_interval": 3600},

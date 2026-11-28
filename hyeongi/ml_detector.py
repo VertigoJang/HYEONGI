@@ -54,12 +54,19 @@ class AlertWriter:
 def run(iface, clf=None, bl=None, threshold=0.9, block_private=False,
         idle=15, active=120, log=print, on_flow=None, stop=None,
         skip=(), local=None, refresh=3600, on_event=None, alerts=None, clock=None, policy=None,
-        retry=60):
+        retry=60, origins=None):
     """Classify live flows on `iface`.
+
+    Only records in which a connection starts are classified (see
+    hyeongi.flowpart): a later piece of a connection names as its source
+    whoever spoke first after the cut, which need not be the one who started it.
 
     clf: trained classifier, or None to only observe flows (e.g. for logging).
     bl:  Blocklist to enforce with, or None for dry-run.
-    on_flow: optional callback(flow) for every finished flow (flow logging).
+    on_flow: optional callback(flow, part, starter) for every finished flow
+      (flow logging); part is "start" / "cont" / "mid", starter the address
+      that started the connection or None.
+    origins: optional flowpart.Origins that remembers who started what.
     stop: optional threading.Event; checked between flows.
     skip / local: never-block IPs (config skip:, and this host's DNS servers,
       gateway and own addresses); same rules as the IDS bridge.
@@ -71,7 +78,10 @@ def run(iface, clf=None, bl=None, threshold=0.9, block_private=False,
     """
     import time
     from nfstream import NFStreamer
+    from hyeongi.flowpart import START, Origins
     clock = clock or time.monotonic
+    if origins is None:
+        origins = Origins()
     seen = {}; skip = {norm_ip(str(x)) for x in skip}
     ev = on_event or (lambda a, act: None)
     what = f"classifying (threshold {threshold})" if clf is not None else "observing"
@@ -80,9 +90,10 @@ def run(iface, clf=None, bl=None, threshold=0.9, block_private=False,
                            idle_timeout=idle, active_timeout=active):
         if stop is not None and stop.is_set():
             break
+        part, starter = origins.of(flow)
         if on_flow is not None:
-            on_flow(flow)
-        if clf is None:
+            on_flow(flow, part, starter)
+        if clf is None or part != START:
             continue
         p = attack_proba(clf, flow)
         if p < threshold:

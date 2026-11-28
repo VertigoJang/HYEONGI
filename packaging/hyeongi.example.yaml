@@ -56,7 +56,8 @@ capture:                  # flow features for ML training data, as CSV (no paylo
   enabled: auto           # auto = on when nfstream is installed
   dir: /var/lib/hyeongi/flows
   rows_per_file: 50000    # ~20 MB per file
-  keep: 100               # newest files kept (~2 GB, several million flows)
+  keep: 100               # disk budget in full files (~2 GB, several million flows): the
+                          # oldest logs are deleted only when all of them exceed it
 
 triage:                   # "Inspection": read-only LLM review of flagged IPs (local Ollama); never blocks or unblocks
   enabled: true

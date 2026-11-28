@@ -53,7 +53,9 @@ def test_bridge_waits_the_whole_refresh_after_a_block_that_worked(monkeypatch):
 
 
 def test_ml_detector_tries_a_failed_block_again(monkeypatch):
-    flows = [types.SimpleNamespace(src_ip=SRC, dst_ip="192.0.2.1", dst_port=22, protocol=6) for _ in range(4)]
+    flows = [types.SimpleNamespace(src_ip=SRC, src_port=40000 + i, dst_ip="192.0.2.1", dst_port=22, protocol=6,
+                                   src2dst_syn_packets=1, src2dst_ack_packets=0, src2dst_packets=1)
+             for i in range(4)]                        # four connection attempts, each a SYN
     nfstream = types.ModuleType("nfstream")            # stands in for the real capture library
     nfstream.NFStreamer = lambda **kw: iter(flows)
     monkeypatch.setitem(sys.modules, "nfstream", nfstream)

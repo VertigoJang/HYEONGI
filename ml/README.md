@@ -46,7 +46,11 @@ over-flagging that comes from one network shows up as such.
 
 **Direction matters.** The detectors only act on flows another host started.
 Build benign data from those (`--dir in`), and split by time rather than by
-random flows (flows of one session are near-identical):
+random flows (flows of one session are near-identical). Since rc46 the logs
+also say which `part` of a connection a record is, and the ML detector only
+judges records in which a connection starts (`--part start`). In logs written
+before rc46 the later pieces of this host's own connections are marked "in":
+do not take those rows for inbound traffic.
 
 ```bash
 python3 -m ml.make_dataset --flows "/var/lib/hyeongi/flows/flows-202611[01]*.csv" --label 0 --dir in --out benign-train.csv

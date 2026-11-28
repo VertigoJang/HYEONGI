@@ -2,6 +2,33 @@
 
 ## 3.0.0 (in testing)
 
+**Who started the connection**
+- rc46: a flow record now says which part of a connection it is, and `dir` in the flow
+  logs comes from whoever started the connection. nfstream cuts a connection into
+  several records (after 15 s without a packet, and every 120 s); each names as its
+  source whoever sent the first packet of that record. So the later pieces of a
+  download this host started were logged as flows "in" from the server, and classified
+  as such. Found by counting a laptop's logs: of 1,967 inbound TCP rows, 1,962 had no
+  SYN, and all 1,967 went to an ephemeral port of this host, where nothing listens.
+  - `hyeongi.flowpart.Origins` remembers who started each connection (TCP: the side
+    that sent a SYN without ACK; other protocols: the first record) for an hour (TCP)
+    or five minutes, at most 50,000 connections.
+  - The flow logs gain `part`: "start", "cont" (a later piece; the starter is
+    remembered) or "mid" (a TCP piece of a connection nobody saw start: `dir` is empty).
+  - The ML detector classifies only "start" records. Later pieces and "mid" records
+    are logged, not judged: the source of such a record is not who started it.
+  - `ml.make_dataset` keeps `part` and has `--part`. Logs written before rc46 are not
+    changed: their `dir` is wrong for later pieces, and their `part` is empty.
+  - The model in use was trained on those logs. Its benign "inbound" examples were
+    pieces of this host's own connections, so it should be trained again on logs
+    written since rc46; until then its scores for real inbound connections are untested.
+- rc46: flow logs are deleted for the disk they take, not for how many there are. A new
+  file starts with every daemon start, so a daemon restarted often reached the limit of
+  100 files with 1,800 rows a file and began deleting the oldest. Now the oldest files
+  go only when all of them together take more than `capture.keep` full files would
+  (`keep` x `rows_per_file` x 400 bytes; 2 GB with the defaults).
+- Tests: 14 more (49), for the rules above and the disk limit.
+
 **Tests**
 - rc45: the first automated tests (`tests/`, run with `python3 -m pytest -q tests`): 35
   cases for the rc43 fixes - the XDP attachment check, the retry after a failed block,
