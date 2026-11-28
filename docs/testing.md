@@ -104,6 +104,7 @@ python3 -m pytest -q tests
 | `test_installers.py` | 실습 모드 중에 설치 스크립트가 서비스를 켜거나 부팅 시 시작을 되살리지 않는지 |
 | `test_flow_parts.py` | 긴 연결의 뒤쪽 조각을 접속을 건 쪽의 것으로 기록하는지, 탐지기가 접속이 시작되는 조각만 판정하는지 |
 | `test_flowlog.py` | 흐름 기록에 `part` 열이 들어가는지, 작은 파일이 많다는 이유로 지워지지 않는지 |
+| `test_make_dataset.py` | 예전 기록의 `part`와 `dir`을 접속을 건 쪽 기준으로 다시 계산하는지 (pandas가 없으면 건너뜀) |
 | `conftest.py` | 가짜 bpftool과 그 응답 예시 |
 
 패킷이 실제로 버려지는지는 이 테스트로 알 수 없습니다. 그 확인은 아래 자체 시험과 실습망에서

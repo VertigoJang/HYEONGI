@@ -2,6 +2,17 @@
 
 ## 3.0.0 (in testing)
 
+**Older flow logs, read the new way**
+- rc48: `ml.make_dataset` works out `part` and `dir` again for rows that have no `part`
+  (flow logs written before rc46, and PCAPs), with the rules the live detector uses
+  since rc46: it goes through the rows in time order with one `flowpart.Origins` for
+  all inputs, so a connection is followed from one file into the next. A later piece
+  of this host's own connection that the log marks "in" becomes "out"/"cont"; a TCP
+  piece nobody saw start gets an empty `dir`. The logs are not changed; `--no-replay`
+  keeps what they say. Each input reports how many rows were worked out and how many
+  changed direction.
+- Tests: 5 more (65); they need pandas and are skipped without it.
+
 **A pause or practice mode undone by something else**
 - rc47: three cases.
   - `practice end` resumed collection even when it had been paused before the practice

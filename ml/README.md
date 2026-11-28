@@ -49,8 +49,10 @@ Build benign data from those (`--dir in`), and split by time rather than by
 random flows (flows of one session are near-identical). Since rc46 the logs
 also say which `part` of a connection a record is, and the ML detector only
 judges records in which a connection starts (`--part start`). In logs written
-before rc46 the later pieces of this host's own connections are marked "in":
-do not take those rows for inbound traffic.
+before rc46 the later pieces of this host's own connections are marked "in";
+`ml.make_dataset` works `part` and `dir` out again for such rows (rc48), so a
+dataset built from them says who really started each connection. `--no-replay`
+keeps what the logs say.
 
 ```bash
 python3 -m ml.make_dataset --flows "/var/lib/hyeongi/flows/flows-202611[01]*.csv" --label 0 --dir in --out benign-train.csv

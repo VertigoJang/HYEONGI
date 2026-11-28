@@ -33,7 +33,11 @@ this record), "cont" (a later piece of a connection seen before) or "mid" (a
 piece of a connection nobody saw start). The live detector only judges "start"
 records, and before rc46 `dir` came from the source of each record, so in
 older logs the later pieces of this host's own connections are marked "in".
-Older rows and PCAPs have an empty `part`.
+For rows without `part` (older logs, PCAPs) both are worked out again here, in
+time order over all the inputs, the way the live detector does it since rc46
+(hyeongi.flowpart): `part` from the SYN and the records seen before, `dir` from
+whoever started the connection. The logs themselves are not changed, and
+--no-replay keeps what they say.
 
   python3 -m ml.make_dataset --flows "/var/lib/hyeongi/flows/*.csv" --label 0 --dir in --part start --out benign-in.csv
 """
@@ -41,6 +45,10 @@ import argparse, ipaddress
 import numpy as np
 import pandas as pd
 from hyeongi.features import FEATURES
+from hyeongi.flowpart import Origins
+
+REPLAY_NEEDS = ("protocol", "src_port", "dst_port", "src2dst_syn_packets", "src2dst_ack_packets",
+                "src2dst_packets", "bidirectional_duration_ms")
 
 def matcher(ips, nets):
     ipset = set(ips); nets = [ipaddress.ip_network(n) for n in nets]
@@ -73,6 +81,33 @@ def infer_dir(df):
                      index=df.index), own
 
 
+def replay(origins, df, d, part):
+    """`part`, and `dir` from who started the connection, for the rows of one
+    input that have no `part` yet. d / part: what the input says (or what was
+    inferred). origins: one flowpart.Origins for all inputs, so a connection is
+    followed from one file into the next. Returns (part, dir, rows worked out,
+    rows whose dir changed); nothing is worked out when a column is missing."""
+    when = "ts_ms" if "ts_ms" in df.columns else "bidirectional_first_seen_ms"
+    if when not in df.columns or not set(REPLAY_NEEDS) <= set(df.columns):
+        return part, d, 0, 0
+    src, dst = df["src_ip"].astype(str).to_numpy(), df["dst_ip"].astype(str).to_numpy()
+    was = d.to_numpy(dtype=object)
+    own = np.where(was == "out", src, np.where(was == "in", dst, ""))    # this host's end of the row
+    first = pd.to_numeric(df[when], errors="coerce").fillna(0).to_numpy()
+    last = first + pd.to_numeric(df["bidirectional_duration_ms"], errors="coerce").fillna(0).to_numpy()
+    proto, sport, dport, syn, ack, packets = (df[c].to_numpy() for c in REPLAY_NEEDS[:6])
+    todo = (part == "").to_numpy()
+    new_part, new_dir = part.to_numpy(dtype=object).copy(), was.copy()
+    for i in np.argsort(first, kind="stable"):
+        p, starter = origins.classify(proto[i], src[i], sport[i], dst[i], dport[i], first[i], last[i],
+                                      syn[i], ack[i], packets[i])
+        if todo[i]:
+            new_part[i] = p
+            new_dir[i] = "" if starter is None or own[i] == "" else ("out" if starter == own[i] else "in")
+    changed = int(((new_dir != was) & todo).sum())
+    return pd.Series(new_part, index=df.index), pd.Series(new_dir, index=df.index), int(todo.sum()), changed
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pcap", action="append", default=[], help="PCAP file (repeatable)")
@@ -95,6 +130,9 @@ def main():
                     help="keep only flows started by another host (in) or by this host (out)")
     ap.add_argument("--part", action="append", choices=["start", "cont", "mid"], default=[],
                     help="keep only these parts of a connection (repeatable; flow logs since rc46)")
+    ap.add_argument("--no-replay", action="store_true",
+                    help="keep `dir` as the inputs say and leave `part` empty for rows that have none "
+                         "(default: work both out again, see Part above)")
     ap.add_argument("--out", default="flows.csv")
     a = ap.parse_args()
     renames = {}
@@ -108,6 +146,7 @@ def main():
     if not a.pcap and not flow_files:
         ap.error("give at least one --pcap or --flows file")
     att = matcher(a.attacker_ip, a.attacker_net)
+    origins = Origins()
     parts = []
     sources = [("pcap", p) for p in a.pcap] + [("flows", f) for f in flow_files]
     for kind, pc in sources:
@@ -128,6 +167,10 @@ def main():
         if (d == "").all():
             d, own = infer_dir(df)
             inferred = f", direction inferred (this host: {', '.join(sorted(own)) or 'not found'})"
+        if not a.no_replay:
+            part, d, done, turned = replay(origins, df, d, part)
+            if done:
+                inferred += f", part worked out for {done} rows ({turned} changed direction)"
         extra = [c for c in ("dst_port", "protocol") if c in df.columns]   # for ml.fp_report
         df = df[FEATURES + ["src_ip", "dst_ip"] + extra].copy(); df["label"] = lbl; df["net"] = net
         df["dir"] = d
