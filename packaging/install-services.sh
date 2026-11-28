@@ -79,8 +79,7 @@ echo "[+] $BIN/hyeongi, $BIN/hyeongid -> $ROOT/bin/"
 sed "s|__ROOT__|$ROOT|g" "$HERE/hyeongid.service" > "$UNIT"
 chmod 0644 "$UNIT"
 systemctl daemon-reload
-systemctl enable hyeongid >/dev/null 2>&1
-systemctl restart hyeongid
+enable_and_restart hyeongid
 
 MODEL="$(cd "$ROOT" && python3 -c "from hyeongi import config; print(config.load('$CONF')['ml']['model'])")"
 sleep 2

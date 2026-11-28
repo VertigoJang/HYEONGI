@@ -21,6 +21,16 @@ def paused():
     return os.path.exists(FLAG)
 
 
+def pause_reason():
+    """The reason given when collection was paused ("-" if none was), or None
+    when collection is not paused. Practice mode pauses with "practice: <memo>"."""
+    try:
+        with open(FLAG, encoding="utf-8", errors="replace") as f:
+            return f.readline().strip() or "-"
+    except OSError:
+        return None
+
+
 def _log(what):
     line = f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} {what}\n"
     with open(LOG, "a", encoding="utf-8") as f:

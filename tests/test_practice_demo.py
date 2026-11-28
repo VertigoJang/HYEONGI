@@ -1,5 +1,6 @@
-"""Practice mode: `practice end` brings the capture unit back when it should,
-and `demo on` refuses while practice mode is on."""
+"""Practice mode: `practice end` brings the capture unit back when it should and
+leaves a pause alone that was there before the practice; `demo on` refuses while
+practice mode is on."""
 import json
 
 import pytest
@@ -12,9 +13,11 @@ ALL_UNITS = ["hyeongi-xdp", "hyeongi-ids", "hyeongid", "hyeongi-capture"]
 
 @pytest.fixture
 def end_practice(monkeypatch, tmp_path):
-    """calls = end_practice(capture_was, enabled_before): run `practice end` on a
-    saved state and return every systemctl / collect call it made."""
-    def run(capture_was, enabled_before):
+    """calls = end_practice(capture_was, enabled_before, reason): run `practice end`
+    on a saved state and return every systemctl / collect call it made. reason:
+    what the pause file says (practice mode writes "practice: <memo>")."""
+    def run(capture_was, enabled_before, reason="practice: -"):
+        earlier = not reason.startswith("practice:")
         conf = tmp_path / "hyeongi.yaml"
         conf.write_text("backend: nft\ncapture:\n  dir: %s\n" % (tmp_path / "flows"))
         state = tmp_path / "practice.json"
@@ -30,8 +33,9 @@ def end_practice(monkeypatch, tmp_path):
         monkeypatch.setattr(practice, "_enabled", lambda unit: "enabled")
         monkeypatch.setattr(practice, "collect", lambda argv: calls.append(("collect",) + tuple(argv)))
         monkeypatch.setattr(practice.time, "sleep", lambda seconds: None)
-        monkeypatch.setattr(hyeongi.collect, "paused", lambda: False)
-        practice.end()
+        monkeypatch.setattr(practice, "pause_reason", lambda: reason)
+        monkeypatch.setattr(hyeongi.collect, "paused", lambda: earlier)
+        run.code = practice.end()
         return calls
     return run
 
@@ -48,6 +52,43 @@ def test_capture_stays_off_when_it_is_not_used(end_practice):
 
 def test_capture_runs_again_when_it_ran_before(end_practice):
     assert ("stop", "hyeongi-capture") not in end_practice("active", [])
+
+
+def test_end_resumes_a_pause_that_the_practice_made(end_practice):
+    assert ("collect", "resume") in end_practice("active", ALL_UNITS)
+    assert end_practice.code == 0
+
+
+def test_end_leaves_alone_a_pause_from_before_the_practice(end_practice, capsys):
+    """`hyeongi pause exam-week`, then practice mode: ending the practice must
+    not resume what was paused for another reason."""
+    calls = end_practice("active", ALL_UNITS, reason="exam-week")
+    assert ("collect", "resume") not in calls
+    assert ("stop", "hyeongi-capture") not in calls
+    assert ("start", "hyeongi-ids", "hyeongid") in calls            # detection does come back
+    out = capsys.readouterr().out
+    assert "collection still paused, as before the practice (exam-week)" in out
+    assert "stays paused: sudo hyeongi resume" in out
+    assert end_practice.code == 0
+
+
+def test_start_remembers_a_pause_that_was_already_there(monkeypatch, tmp_path, capsys):
+    conf = tmp_path / "hyeongi.yaml"
+    conf.write_text("backend: nft\ncapture:\n  dir: %s\n" % (tmp_path / "flows"))
+    monkeypatch.setattr(config, "DEFAULT_PATH", str(conf))
+    monkeypatch.setattr(practice, "STATE", str(tmp_path / "practice.json"))
+    monkeypatch.setattr(practice, "LOG", str(tmp_path / "practice.log"))
+    monkeypatch.setattr(practice, "_systemctl", lambda action, *units: None)
+    monkeypatch.setattr(practice, "_active", lambda unit: "inactive")
+    monkeypatch.setattr(practice, "_enabled", lambda unit: "disabled")
+    monkeypatch.setattr(practice, "collect", lambda argv: None)
+    monkeypatch.setattr(practice.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(practice, "pause_reason", lambda: "exam-week")
+    from hyeongi import xdp
+    monkeypatch.setattr(xdp, "PIN_DIR", str(tmp_path / "no-pins"))
+    assert practice.start("lab") == 0
+    assert json.loads((tmp_path / "practice.json").read_text())["paused_before"] == "exam-week"
+    assert "already paused (exam-week): practice end leaves it paused" in capsys.readouterr().out
 
 
 def test_demo_on_refuses_during_practice_mode(monkeypatch, tmp_path):

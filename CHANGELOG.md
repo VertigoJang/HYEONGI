@@ -2,6 +2,25 @@
 
 ## 3.0.0 (in testing)
 
+**A pause or practice mode undone by something else**
+- rc47: three cases.
+  - `practice end` resumed collection even when it had been paused before the practice
+    began (`hyeongi pause`, then `practice start`): the earlier pause was gone and the
+    capture unit ran again. It now resumes only a pause the practice made itself (the
+    pause file says "practice: ..."). An earlier pause stays, and the result says so;
+    `practice start` reports it and records it as `paused_before`. A practice started
+    by an older version is handled the same way.
+  - `hyeongi start` listed all four services as started even when hyeongi-capture had
+    been skipped because collection is paused. It now lists the units that are active
+    and names the others, with the cause when it is known.
+  - The installers enabled and started their unit during practice mode, which turns
+    start at boot off on purpose: `install-xdp.sh` would attach the XDP program,
+    `install-snort.sh` would start Snort. Every installer now ends with
+    `enable_and_restart` (packaging/lib/common.sh), which only installs the unit while
+    practice mode is on; `install-snort.sh` and `use-suricata.sh` leave hyeongid alone
+    then.
+- Tests: 11 more (60).
+
 **Who started the connection**
 - rc46: a flow record now says which part of a connection it is, and `dir` in the flow
   logs comes from whoever started the connection. nfstream cuts a connection into

@@ -157,6 +157,31 @@ def start_all():
     subprocess.run(["systemctl", "start", *UNITS], check=False)
 
 
+def start_report(states, reason):
+    """What `hyeongi start` prints. states: unit -> `systemctl is-active` answer;
+    reason: why collection is paused, or None. A unit that did not start is
+    named, with the cause when it is known."""
+    up = [u for u in UNITS if states.get(u) == "active"]
+    lines = ["[+] HYEONGI started (" + ", ".join(up) + ")" if up else "[x] no HYEONGI service is running"]
+    for u in UNITS:
+        if u in up:
+            continue
+        if u == "hyeongi-capture" and reason is not None:
+            lines.append(f"    {u} not started: training-data collection is paused ({reason}); "
+                         "it starts with: sudo hyeongi resume")
+        else:
+            lines.append(f"[!] {u} is {states.get(u) or 'unknown'}: sudo journalctl -u {u} -n 20 --no-pager")
+    return "\n".join(lines)
+
+
+def unit_states():
+    out = {}
+    for u in UNITS:
+        r = subprocess.run(["systemctl", "is-active", u], capture_output=True, text=True)
+        out[u] = r.stdout.strip() or "unknown"
+    return out
+
+
 def stop_all():
     """Stop every HYEONGI service. The kernel blocklist is left as it is
     (option 1): IPs already blocked stay blocked until block_timeout or a
@@ -303,7 +328,11 @@ def main(argv=None):
         if ps:
             die(f"practice mode is on since {ps['start']}; end it with: sudo hyeongi practice end")
         start_all()
-        print("[+] HYEONGI started (" + ", ".join(UNITS) + ")")
+        if config.WINDOWS:
+            print("[+] HYEONGI started")
+        else:
+            from hyeongi.collect import pause_reason
+            print(start_report(unit_states(), pause_reason()))
     elif cmd == "stop":
         stop_all()
         print("[+] HYEONGI stopped; already-blocked IPs stay blocked (clear with: hyeongi flush)")

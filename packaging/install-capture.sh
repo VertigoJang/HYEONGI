@@ -88,8 +88,7 @@ fi
 chmod 0644 "$UNIT"
 
 systemctl daemon-reload
-systemctl enable hyeongi-capture >/dev/null 2>&1
-systemctl restart hyeongi-capture
+enable_and_restart hyeongi-capture
 
 sleep 3
 echo

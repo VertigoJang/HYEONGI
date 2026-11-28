@@ -135,8 +135,7 @@ echo "[+] snort -T: config OK ($ok)"
 sed -e "s|__SNORT__|$SNORT|g" -e "s|__IFACE__|$IFACE|g" "$HERE/hyeongi-ids.service" > "$UNIT"
 chmod 0644 "$UNIT"
 systemctl daemon-reload
-systemctl enable hyeongi-ids >/dev/null 2>&1
-systemctl restart hyeongi-ids
+enable_and_restart hyeongi-ids
 
 # --- point the bridge + triage at the new alert file ------------------------------
 if [[ -f "$CONF" ]]; then
@@ -144,7 +143,7 @@ if [[ -f "$CONF" ]]; then
   # only the ids: and triage: sections; ml: has its own alert_file (ML detections)
   sed -i -E "/^(ids|triage):/,/^[^[:space:]#]/ s|^  alert_file: .*|  alert_file: $ALERT|" "$CONF"
   echo "[+] $CONF: alert_file -> $ALERT  (previous saved as $CONF.bak)"
-  systemctl restart hyeongid 2>/dev/null || true
+  restart_unit hyeongid
 fi
 
 sleep 3

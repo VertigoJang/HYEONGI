@@ -68,8 +68,7 @@ echo "[+] $CONF: backend: xdp, xdp.iface: $IFACE, xdp.mode: $MODE  (backup: $CON
 ( cd "$ROOT" && python3 -m hyeongi.xdp build )
 sed "s|__ROOT__|$ROOT|g" "$HERE/hyeongi-xdp.service" > "$UNIT"; chmod 0644 "$UNIT"
 systemctl daemon-reload
-systemctl enable hyeongi-xdp >/dev/null 2>&1
-systemctl restart hyeongi-xdp
+enable_and_restart hyeongi-xdp
 restart_detectors
 
 sleep 2

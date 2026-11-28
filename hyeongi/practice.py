@@ -9,7 +9,8 @@ bring it back and check that nothing from the practice reached the training data
 start
   1. remembers whether hyeongi-capture (raw packet capture) was running, and
      which units start at boot
-  2. pauses training-data collection (the window goes to pauses.log)
+  2. pauses training-data collection (the window goes to pauses.log); a pause
+     that was already there (hyeongi pause) is left as it is
   3. stops hyeongid, hyeongi-ids, hyeongi-xdp (the XDP program is detached)
      and hyeongi-capture, and turns their start at boot off, so a reboot during
      the practice does not bring them back (systemctl stop alone does not survive
@@ -23,7 +24,8 @@ end
      hyeongi-xdp, hyeongi-ids, hyeongid
   2. resumes collection; hyeongi-capture runs again if it ran before start or
      starts at boot (so stopping everything first, then `practice start`, does
-     not leave it off)
+     not leave it off). If collection was paused before the practice began, it
+     stays paused: that pause is not the practice's to end (hyeongi resume)
   3. checks: services up, XDP attached again (backend xdp), the newest flow log
      from before start unchanged, no flow log written during the practice, and
      (with --target) no flow row with a target address
@@ -37,7 +39,7 @@ nftables blocks stay until they expire.
 import glob, ipaddress, json, os, subprocess, sys, time
 
 from hyeongi import config
-from hyeongi.collect import DATA, main as collect
+from hyeongi.collect import DATA, main as collect, pause_reason
 
 STATE = os.path.join(DATA, "practice.json")
 LOG = os.path.join(DATA, "practice.log")
@@ -141,6 +143,7 @@ def start(memo="", targets=()):
     cap = _active(CAPTURE)
     boot = {u: _enabled(u) for u in CORE + (CAPTURE,)}
     on_boot = [u for u, e in boot.items() if e == "enabled"]
+    before = pause_reason()                           # paused already: not ours to resume
     collect(["pause", "practice:", memo or "-"])
     if config.WINDOWS:
         from hyeongi.ctl import stop_all
@@ -159,7 +162,7 @@ def start(memo="", targets=()):
             "size": os.path.getsize(files[-1])} if files else None
     s = {"start": time.strftime("%Y-%m-%d %H:%M:%S"), "start_epoch": time.time(),
          "memo": memo, "targets": list(targets), "capture_was": cap, "last_flow": last,
-         "enabled_before": on_boot}
+         "enabled_before": on_boot, "paused_before": before}
     with open(STATE, "w", encoding="utf-8") as f:
         json.dump(s, f, ensure_ascii=False, indent=1)
     _log(f"start {memo or '-'} targets={','.join(targets) or '-'} capture_was={cap}")
@@ -169,6 +172,8 @@ def start(memo="", targets=()):
     print(f"    XDP pins           {'still there' if pins else 'gone'}")
     if last:
         print(f"    newest flow log    {last['name']} ({time.strftime('%H:%M:%S', time.localtime(last['mtime']))})")
+    if before is not None:
+        print(f"    collection was already paused ({before}): practice end leaves it paused")
     still = [u for u in on_boot if _enabled(u) == "enabled"]
     if up or pins or still:
         print("[!] not fully stopped: " + ", ".join(up + (["XDP pins"] if pins else [])
@@ -194,9 +199,12 @@ def end():
             _systemctl("enable", *s["enabled_before"])
         _systemctl("restart", "hyeongi-xdp")        # oneshot: restart = attach again
         _systemctl("start", "hyeongi-ids", "hyeongid")
-    collect(["resume"])                               # also starts hyeongi-capture
-    if s.get("capture_was") != "active" and CAPTURE not in (s.get("enabled_before") or []):
-        _systemctl("stop", CAPTURE)               # was off and does not start at boot: leave it off
+    reason = pause_reason()
+    kept = reason is not None and not reason.startswith("practice:")
+    if not kept:                                      # the pause is the practice's own
+        collect(["resume"])                           # also starts hyeongi-capture
+        if s.get("capture_was") != "active" and CAPTURE not in (s.get("enabled_before") or []):
+            _systemctl("stop", CAPTURE)           # was off and does not start at boot: leave it off
     time.sleep(5)
 
     ok, lines = True, []
@@ -217,7 +225,10 @@ def end():
         on = xdp.loaded() and xdp.attached(xdp.target(c["xdp"]["iface"])[0]) is not False
         check(on, "XDP program attached again" if on else "XDP program not attached")
     from hyeongi.collect import paused
-    check(not paused(), "training-data collection resumed" if not paused() else "collection still paused")
+    if kept:
+        check(paused(), f"collection still paused, as before the practice ({reason})")
+    else:
+        check(not paused(), "training-data collection resumed" if not paused() else "collection still paused")
     t0 = s["start_epoch"]
     files = _flow_files(c)
     last = s.get("last_flow")
@@ -243,6 +254,8 @@ def end():
     print(f"[+] practice mode OFF ({s['start']} - {time.strftime('%H:%M:%S')}, {mins:.0f} min): "
           "HYEONGI running again")
     print("\n".join(lines))
+    if kept:
+        print(f"[=] collection was paused before the practice ({reason}) and stays paused: sudo hyeongi resume")
     print("[+] training data is clean" if ok else
           "[!] a check failed; see above. Rows of a target: sudo hyeongi practice scrub <IP>")
     return 0 if ok else 1

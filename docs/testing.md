@@ -99,7 +99,9 @@ python3 -m pytest -q tests
 | `test_xdp_attach.py` | XDP 프로그램이 인터페이스에 붙어 있을 때만 차단을 기록하는지, 떨어졌으면 다시 붙이는지 |
 | `test_block_retry.py` | 실패한 차단을 60초 뒤에 다시 시도하는지 |
 | `test_net_status.py` | `hyeongi net`이 `enforce` 값과 감시 인터페이스를 사실대로 보여 주는지 |
-| `test_practice_demo.py` | `practice end`가 수집 서비스를 되살리는지, 실습 모드 중 `demo on`을 거부하는지 |
+| `test_practice_demo.py` | `practice end`가 수집 서비스를 되살리는지, 실습 전부터 있던 일시정지는 풀지 않는지, 실습 모드 중 `demo on`을 거부하는지 |
+| `test_start_report.py` | `hyeongi start`가 실제로 시작된 서비스만 알리는지 |
+| `test_installers.py` | 실습 모드 중에 설치 스크립트가 서비스를 켜거나 부팅 시 시작을 되살리지 않는지 |
 | `test_flow_parts.py` | 긴 연결의 뒤쪽 조각을 접속을 건 쪽의 것으로 기록하는지, 탐지기가 접속이 시작되는 조각만 판정하는지 |
 | `test_flowlog.py` | 흐름 기록에 `part` 열이 들어가는지, 작은 파일이 많다는 이유로 지워지지 않는지 |
 | `conftest.py` | 가짜 bpftool과 그 응답 예시 |

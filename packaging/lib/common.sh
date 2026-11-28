@@ -103,3 +103,29 @@ apparmor_allow_tcpdump() {   # apparmor_allow_tcpdump <dir>
 }
 
 nologin_shell() { command -v nologin 2>/dev/null || echo /bin/false; }
+
+# --- practice mode -------------------------------------------------------------
+# `hyeongi practice start` stops every service and turns its start at boot off.
+# An installer run meanwhile must not bring one back.
+PRACTICE_STATE=/var/lib/hyeongi/practice.json
+practice_on() { [[ -e "$PRACTICE_STATE" ]]; }
+
+# enable_and_restart UNIT: the last step of an installer. In practice mode the
+# unit is installed and nothing else; `hyeongi practice end` starts what ran before.
+enable_and_restart() {
+  if practice_on; then
+    echo "[=] practice mode is on: $1 is installed, but not enabled or started."
+    echo "    'sudo hyeongi practice end' brings back what ran before; a unit that is new: sudo systemctl enable --now $1"
+    return 0
+  fi
+  systemctl enable "$1" >/dev/null 2>&1
+  systemctl restart "$1"
+}
+
+# restart_unit UNIT: after a config change. Nothing in practice mode.
+restart_unit() {
+  if practice_on; then
+    return 0
+  fi
+  systemctl restart "$1" 2>/dev/null || true
+}

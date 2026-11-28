@@ -32,7 +32,7 @@ if systemctl is-enabled --quiet hyeongi-ids 2>/dev/null; then
   systemctl disable --now hyeongi-ids
   echo "[+] hyeongi-ids (Snort) stopped and disabled"
 fi
-systemctl restart hyeongid 2>/dev/null || true
+restart_unit hyeongid
 
 sleep 2
 echo "suricata      : $(systemctl is-active suricata 2>/dev/null || true)"
