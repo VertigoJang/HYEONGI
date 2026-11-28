@@ -2,6 +2,13 @@
 
 ## 3.0.0 (in testing)
 
+**Tests**
+- rc45: the first automated tests (`tests/`, run with `python3 -m pytest -q tests`): 35
+  cases for the rc43 fixes - the XDP attachment check, the retry after a failed block,
+  `hyeongi net`, `practice end` and `demo on`. They need no root, network or bpftool;
+  every outside command is replaced by a fake. Whether packets are really dropped is
+  still checked by hand (docs/testing.md).
+
 **Screenshots**
 - rc44: the README shows the terminal menu and the desktop app under the new name
   (`docs/figures/terminal-menu.png`, new `docs/figures/app-status.png`). One Korean

@@ -84,6 +84,27 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\selftest.ps1
 Windows 10은 2025년 10월 14일에 마이크로소프트의 일반 지원이 끝났습니다. 시험은 하지만,
 문서에는 보안 업데이트를 받는 환경에서 쓰라고 적습니다.
 
+## 자동 테스트
+
+`tests/` 폴더의 테스트는 관리자 권한, 네트워크, bpftool 없이 돕니다. 바깥 명령(bpftool,
+systemctl 등)을 모두 가짜로 바꿔 놓고, 코드가 그 답을 받았을 때 무엇을 하는지만 봅니다.
+pytest가 필요합니다(Debian 계열 패키지 이름: `python3-pytest`).
+
+```bash
+python3 -m pytest -q tests
+```
+
+| 파일 | 보는 것 |
+|---|---|
+| `test_xdp_attach.py` | XDP 프로그램이 인터페이스에 붙어 있을 때만 차단을 기록하는지, 떨어졌으면 다시 붙이는지 |
+| `test_block_retry.py` | 실패한 차단을 60초 뒤에 다시 시도하는지 |
+| `test_net_status.py` | `hyeongi net`이 `enforce` 값과 감시 인터페이스를 사실대로 보여 주는지 |
+| `test_practice_demo.py` | `practice end`가 수집 서비스를 되살리는지, 실습 모드 중 `demo on`을 거부하는지 |
+| `conftest.py` | 가짜 bpftool과 그 응답 예시 |
+
+패킷이 실제로 버려지는지는 이 테스트로 알 수 없습니다. 그 확인은 아래 자체 시험과 실습망에서
+합니다.
+
 ## 자체 시험이 하는 일
 
 `selftest.sh`와 `selftest.ps1`은 설정과 서비스를 읽기만 하고 바꾸지 않습니다. 예외는 차단
